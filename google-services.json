@@ -1,0 +1,54 @@
+{
+  "project_info": {
+    "project_number": "980201356097",
+    "project_id": "calor-ai-ab538",
+    "storage_bucket": "calor-ai-ab538.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:980201356097:android:04d71536a544ff7a997fc0",
+        "android_client_info": {
+          "package_name": "com.CalorAI"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "980201356097-7qvc7sqltj51430c1q784g7e1rckcrmj.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.CalorAI",
+            "certificate_hash": "5e8f16062ea3cd2c4a0d547876baa6f38cabf625"
+          }
+        },
+        {
+          "client_id": "980201356097-28hmqmnbt35emereqknkll599ig1se9v.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDi4vxZTArUdSOn9yAbYx15bgGLXdSqyF0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "980201356097-28hmqmnbt35emereqknkll599ig1se9v.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "980201356097-qr0en5kae92v4rq8880sfcbggfngm26m.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.CalorAI"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
