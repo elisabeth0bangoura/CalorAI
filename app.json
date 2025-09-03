@@ -10,6 +10,7 @@
     "newArchEnabled": true,
     "ios": {
       "usesAppleSignIn": true,
+       "UIBackgroundModes": ["audio"],
       "googleServicesFile": "./GoogleService-Info.plist",
       "NSCameraUsageDescription": "We need the camera to scan your fridge.",
       "supportsTablet": true,
@@ -18,6 +19,7 @@
     },
     "android": {
       "googleServicesFile": "./google-services.json",
+  
       "adaptiveIcon": {
         "foregroundImage": "./assets/Logo_App_white.png",
         "backgroundColor": "#fff"
@@ -25,6 +27,7 @@
       "edgeToEdgeEnabled": true,
       "package": "com.CalorAI",
       "permissions": [
+        "FOREGROUND_SERVICE_MEDIA_PLAYBACK",
         "android.permission.READ_CALENDAR",
         "android.permission.WRITE_CALENDAR",
         "android.permission.CAMERA",
@@ -44,11 +47,11 @@
           "calendarPermission": "The app needs to access your calendar."
         }
       ],
-      [
+     [
         "expo-video",
         {
           "supportsBackgroundPlayback": true,
-          "supportsPictureInPicture": true
+          "supportsPictureInPicture": false
         }
       ],
       [

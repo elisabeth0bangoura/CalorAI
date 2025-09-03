@@ -1,7 +1,7 @@
 
 // ProgressLine.js
 
-import { Text, TouchableOpacity } from "react-native";
+import { Pressable, Text } from "react-native";
 import { height, size, width } from "react-native-responsive-sizes";
 import { useOnboarding } from "../../Context/OnboardingContext";
 
@@ -23,7 +23,7 @@ setGender,
 
 
 
-     <TouchableOpacity
+          <Pressable
                 onPress={() => {
                   console.log("Pressed:", "Female");
                   setGender("Female");
@@ -49,9 +49,9 @@ setGender,
                 >
                  Female
                 </Text>
-              </TouchableOpacity>
+              </Pressable>
   
-   <TouchableOpacity
+              <Pressable
                 onPress={() => {
                   console.log("Pressed:", "Male");
                   setGender("Male");
@@ -77,7 +77,7 @@ setGender,
                 >
                  Male
                 </Text>
-              </TouchableOpacity>
+              </Pressable>
 
 
 
@@ -85,7 +85,7 @@ setGender,
 
 
 
-                <TouchableOpacity
+                <Pressable
                 onPress={() => {
                   console.log("Pressed:", "Other");
                   setGender("Other");
@@ -111,7 +111,7 @@ setGender,
                 >
                  Other
                 </Text>
-              </TouchableOpacity>
+              </Pressable>
   
   </>
   );

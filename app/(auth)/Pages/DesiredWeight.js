@@ -1,77 +1,164 @@
-// DesiredWeight.js
 import * as Haptics from "expo-haptics";
-import { useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { Switch, Text, View } from "react-native";
 import { height, size, width } from "react-native-responsive-sizes";
 import { RulerPicker } from "react-native-ruler-picker";
 import AppBlurHeader from "../../AppBlurHeader";
+import { useOnboarding } from "../../Context/OnboardingContext";
 
+/* --- conversions --- */
 const KG_PER_LB = 0.45359237;
 const lbToKg = (lb) => Math.round(lb * KG_PER_LB);
 const kgToLb = (kg) => Math.round(kg / KG_PER_LB);
+const toNum = (v) => {
+  const n = typeof v === "string" ? parseFloat(v) : v;
+  return Number.isFinite(n) ? n : null;
+};
 
-export default function DesiredWeight({ initial = 50, onChange }) {
-  // show Metric by default (since initial is in kg)
-  const [isEnabled, setIsEnabled] = useState(true); // true = Metric, false = Imperial
-  const isMetric = isEnabled;
+function DesiredWeight() {
+  const {
+    // current body weight (for smart defaults)
+    kg, lb,
 
-  // ruler width for deferred scroll
-  const [w, setW] = useState(0);
-  const ref = useRef(null);
+    // global unit (optional but we keep it in sync)
+    unitSystem, setUnitSystem, // "metric" | "imperial"
 
-  // value is in the CURRENT unit
-  const [value, setValue] = useState(initial); // starts as kg
+    // goal weight state (THIS PAGE OWNS THESE)
+    goalWeightKg, setGoalWeightKg,
+    goalWeightLb, setGoalWeightLb,
+    goalWeightUnit, setGoalWeightUnit, // "kg" | "lb"
+  } = useOnboarding();
 
-  // for haptics: remember last whole tick we vibrated on
-  const lastTickRef = useRef(Math.round(initial));
-
-  // align to initial once width is known
+  /* ---------- one-time init in context ---------- */
   useEffect(() => {
-    if (w && ref.current?.scrollToValue) ref.current.scrollToValue(value, false);
-  }, [w]); // value is set on mount & on unit toggle
-
-  // toggle units and convert value accordingly
-  const toggleSwitch = () => {
-    setIsEnabled((prev) => {
-      const goingMetric = !prev;
-      setValue((prevVal) => {
-        const converted = goingMetric ? lbToKg(prevVal) : kgToLb(prevVal);
-        lastTickRef.current = Math.round(converted);
-        requestAnimationFrame(() => {
-          ref.current?.scrollToValue?.(converted, false);
-        });
-        return converted;
-      });
-      return goingMetric;
-    });
-  };
-
-  // throttled change handler + haptics
-  const last = useRef(0);
-  const handleChange = (v) => {
-    const now = Date.now();
-    if (now - last.current > 33) {
-      last.current = now;
-      const n = Math.round(Number(v));
-
-      if (n !== lastTickRef.current) {
-        if (n % 5 === 0) {
-          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-        } else {
-          Haptics.selectionAsync();
-        }
-        lastTickRef.current = n;
-      }
-
-      setValue(n);
+    const gKg = toNum(goalWeightKg);
+    const gLb = toNum(goalWeightLb);
+    if (gKg || gLb) {
+      if (!goalWeightUnit) setGoalWeightUnit(gKg ? "kg" : "lb");
+      return;
     }
-  };
+
+    const curKg = toNum(kg);
+    const curLb = toNum(lb);
+    if (curKg) {
+      setGoalWeightKg(curKg);
+      setGoalWeightLb(kgToLb(curKg));
+      setGoalWeightUnit("kg");
+      setUnitSystem?.("metric");
+      return;
+    }
+    if (curLb) {
+      setGoalWeightLb(curLb);
+      setGoalWeightKg(lbToKg(curLb));
+      setGoalWeightUnit("lb");
+      setUnitSystem?.("imperial");
+      return;
+    }
+
+    const fallbackKg = 70;
+    setGoalWeightKg(fallbackKg);
+    setGoalWeightLb(kgToLb(fallbackKg));
+    setGoalWeightUnit("kg");
+    setUnitSystem?.("metric");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* ---------- derive unit + context value ---------- */
+  const unit = goalWeightUnit || (unitSystem === "metric" ? "kg" : "lb");
+  const isMetric = unit === "kg";
+
+  const gKgNum = toNum(goalWeightKg);
+  const gLbNum = toNum(goalWeightLb);
+
+  // value in the CURRENT unit (from context)
+  const contextValue = isMetric
+    ? (gKgNum ?? (gLbNum ? lbToKg(gLbNum) : 70))
+    : (gLbNum ?? (gKgNum ? kgToLb(gKgNum) : 154));
+
+  /* ---------- local preview while dragging ---------- */
+  const [previewValue, setPreviewValue] = useState(contextValue);
+  const draggingRef = useRef(false);
+
+  // keep preview synced to context when not dragging
+  useEffect(() => {
+    if (!draggingRef.current) setPreviewValue(contextValue);
+  }, [contextValue, unit]);
+
+  /* ---------- ruler layout + haptics throttle ---------- */
+  const [rulerWidth, setRulerWidth] = useState(0);
+  const rulerRef = useRef(null);
+  const lastTickRef = useRef(Math.round(contextValue));
+  const lastTsRef = useRef(0);
+
+  // align ruler when width/unit/preview changes
+  useEffect(() => {
+    if (rulerWidth && rulerRef.current?.scrollToValue && Number.isFinite(previewValue)) {
+      rulerRef.current.scrollToValue(previewValue, false);
+      lastTickRef.current = Math.round(previewValue);
+    }
+  }, [rulerWidth, previewValue, unit]);
+
+  /* ---------- handlers ---------- */
+  const toggleUnits = useCallback(() => {
+    const nextUnit = isMetric ? "lb" : "kg";
+    setGoalWeightUnit(nextUnit);
+    setUnitSystem?.(nextUnit === "kg" ? "metric" : "imperial");
+
+    // keep both sides populated + update preview to converted value
+    if (nextUnit === "kg") {
+      const kgVal = gKgNum ?? (gLbNum ? lbToKg(gLbNum) : 70);
+      setGoalWeightKg(kgVal);
+      setGoalWeightLb(kgToLb(kgVal));
+      setPreviewValue(kgVal);
+    } else {
+      const lbVal = gLbNum ?? (gKgNum ? kgToLb(gKgNum) : 154);
+      setGoalWeightLb(lbVal);
+      setGoalWeightKg(lbToKg(lbVal));
+      setPreviewValue(lbVal);
+    }
+    Haptics.selectionAsync();
+  }, [isMetric, gKgNum, gLbNum, setGoalWeightKg, setGoalWeightLb, setGoalWeightUnit, setUnitSystem]);
+
+  // only update local preview while dragging (no context writes)
+  const handleRulerChange = useCallback((v) => {
+    const now = Date.now();
+    if (now - lastTsRef.current < 33) return; // ~30fps throttle
+    lastTsRef.current = now;
+
+    draggingRef.current = true;
+    const n = Math.round(Number(v));
+    if (!Number.isFinite(n)) return;
+
+    setPreviewValue(n);
+
+    if (n !== lastTickRef.current) {
+      (n % 5 === 0)
+        ? Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+        : Haptics.selectionAsync();
+      lastTickRef.current = n;
+    }
+  }, []);
+
+  // commit once on release
+  const handleRulerEnd = useCallback((v) => {
+    const n = Math.round(Number(v));
+    draggingRef.current = false;
+    if (!Number.isFinite(n)) return;
+
+    if (isMetric) {
+      setGoalWeightKg(n);
+      setGoalWeightLb(kgToLb(n));
+    } else {
+      setGoalWeightLb(n);
+      setGoalWeightKg(lbToKg(n));
+    }
+    setPreviewValue(n);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  }, [isMetric, setGoalWeightKg, setGoalWeightLb]);
 
   const unitLabel = isMetric ? "kg" : "lb";
   const min = isMetric ? 30 : kgToLb(30);   // 30 kg -> ~66 lb
   const max = isMetric ? 200 : kgToLb(200); // 200 kg -> ~441 lb
-
-  const display = String(value);
 
   return (
     <View style={{ height: "100%", width: "100%", backgroundColor: "#fff" }}>
@@ -94,7 +181,7 @@ export default function DesiredWeight({ initial = 50, onChange }) {
         </Text>
 
         <View
-          onLayout={(e) => setW(Math.round(e.nativeEvent.layout.width))}
+          onLayout={(e) => setRulerWidth(Math.round(e.nativeEvent.layout.width))}
           style={{
             paddingHorizontal: 16,
             justifyContent: "center",
@@ -103,15 +190,8 @@ export default function DesiredWeight({ initial = 50, onChange }) {
             width: "100%",
           }}
         >
-          {/* Unit switch */}
-          <View
-            style={{
-              flexDirection: "row",
-              top: height(-5),
-              alignSelf: "center",
-              alignItems: "center",
-            }}
-          >
+          {/* Unit switch (context-backed) */}
+          <View style={{ flexDirection: "row", top: height(-5), alignSelf: "center", alignItems: "center" }}>
             <Text
               style={{
                 fontWeight: "700",
@@ -127,7 +207,7 @@ export default function DesiredWeight({ initial = 50, onChange }) {
               trackColor={{ false: "#D3DAE0", true: "#0057FF" }}
               thumbColor={"#fff"}
               ios_backgroundColor="#D3DAE0"
-              onValueChange={toggleSwitch}
+              onValueChange={toggleUnits}
               value={isMetric} // ON = Metric
             />
 
@@ -143,24 +223,17 @@ export default function DesiredWeight({ initial = 50, onChange }) {
             </Text>
           </View>
 
-          {/* Big value label */}
-          <View
-            style={{
-              alignItems: "center",
-              justifyContent: "center",
-              flexDirection: "row",
-              marginBottom: 8,
-            }}
-          >
-            <Text style={{ fontSize: 48, fontWeight: "800" }}>{display}</Text>
+          {/* Big value label uses LOCAL preview to avoid context churn */}
+          <View style={{ alignItems: "center", justifyContent: "center", flexDirection: "row", marginBottom: 8 }}>
+            <Text style={{ fontSize: 48, fontWeight: "800" }}>{String(previewValue)}</Text>
             <Text style={{ fontSize: 28, marginLeft: 6 }}>{unitLabel}</Text>
           </View>
 
-          {/* Ruler */}
-          {w > 0 && (
+          {/* Ruler (remounts on unit change for clean range) */}
+          {rulerWidth > 0 && Number.isFinite(previewValue) && (
             <RulerPicker
-              key={`${w}-${isMetric}`} // remount ruler when unit changes for clean range
-              ref={ref}
+              key={`${rulerWidth}-${unit}`}
+              ref={rulerRef}
               min={min}
               max={max}
               step={1}
@@ -168,24 +241,15 @@ export default function DesiredWeight({ initial = 50, onChange }) {
               longStep={5}
               gapBetweenSteps={10}
               height={140}
-              initialValue={value}
+              initialValue={previewValue}
               fractionDigits={0}
               decelerationRate="fast"
-              onValueChange={handleChange}
-              onValueChangeEnd={(v) => {
-                const n = Math.round(Number(v));
-                setValue(n);
-                // Report both units so the caller can store what they prefer.
-                const kg = isMetric ? n : lbToKg(n);
-                const lb = isMetric ? kgToLb(n) : n;
-                onChange?.({ value: n, unit: isMetric ? "metric" : "imperial", kg, lb });
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-              }}
+              onValueChange={handleRulerChange}
+              onValueChangeEnd={handleRulerEnd}
               indicatorColor="#000"
               indicatorHeight={60}
               shortStepColor="#BDBDBD"
               longStepColor="#BDBDBD"
-              // Hide built-in texts; we render our own label above
               valueTextStyle={{ fontSize: 1, color: "transparent" }}
               unitTextStyle={{ fontSize: 1, color: "transparent" }}
             />
@@ -195,3 +259,5 @@ export default function DesiredWeight({ initial = 50, onChange }) {
     </View>
   );
 }
+
+export default memo(DesiredWeight);

@@ -173,6 +173,18 @@ export default forwardRef(function Scan_Food_Camera(
      scanBusy, beginScan, endScan,
   } = useScanResults();
 
+
+
+
+  function localDateId(d = new Date()) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;           // e.g. "2025-09-03"
+}
+
+
+
   // Register s3 content once
   const didRegister = useRef(false);
   useEffect(() => {
@@ -437,6 +449,59 @@ Rules:
             addLog(`[ERR] Firestore save: ${msg}`);
             Alert.alert("Firestore save failed", msg);
           }
+
+
+
+
+
+
+
+
+          try {
+            const db = getFirestore();
+            const dateId = localDateId();       // only day-month-year (local)
+
+            // ➜ users/{uid}/Today/{dateId}/RecentlyEaten/{autoId}
+            const colRef = collection(db, 'users', userId, 'Today', dateId, 'List');
+
+            const payload = {
+            title: titleSafe,
+            calories_kcal_total: Number.isFinite(kcalSafe) ? kcalSafe : null,
+            protein_g: protein,
+            fat_g: fat,
+            sugar_g: sugar,
+            carbs_g: carbs,
+            fiber_g: fiber,
+            sodium_mg: sodium,
+            health_score: health,
+
+            // arrays
+            items: itemsSafe,
+            alternatives: finalAlts,
+
+            // media + time
+            image_local_uri: pic.uri || null,
+            image_cloud_url: downloadUrl || null,
+            scanned_at_pretty: formatScannedAt?.() || null,
+            created_at: serverTimestamp(),
+
+            // raw/model
+            raw: JSON.stringify(analyzed),
+            result: analyzed,
+            };
+
+            const docRef = await addDoc(colRef, payload);
+            addLog(`Saved scan to Firestore at Today/${dateId} [id=${docRef.id}]`);
+          } catch (err) {
+            const msg = err?.message || String(err);
+            addLog(`[ERR] Firestore save: ${msg}`);
+            Alert.alert('Firestore save failed', msg);
+          }
+
+
+
+
+
 
           onScanResult?.(analyzed);
           addLog("Analysis done");

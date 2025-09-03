@@ -28,7 +28,7 @@ export default function AppBlurHeader2() {
           position: "absolute",
           top: 0,
           zIndex: 2,  width: "100%", 
-          height: height(14)
+          height: height(11)
   }}
       >
         <MaskedView

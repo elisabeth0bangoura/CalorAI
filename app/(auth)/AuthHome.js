@@ -1,26 +1,22 @@
 // app/(auth)/AuthHome.jsx
-// RNFB v23-correct imports + flows; routes to /(auth)/signUp with Email + method
+import * as Haptics from "expo-haptics";
+import { useRouter } from "expo-router";
+import { StatusBar } from "expo-status-bar";
+import { useVideoPlayer, VideoView } from "expo-video";
+import { useRef, useState } from "react";
+import { Platform, Text, TouchableOpacity, View } from "react-native";
+import { height, size, width } from "react-native-responsive-sizes";
 
-import * as Haptics from 'expo-haptics';
-import { Image } from 'expo-image';
-import { useRouter } from 'expo-router';
-import { StatusBar } from 'expo-status-bar';
-import { useVideoPlayer, VideoView } from 'expo-video';
-import { Mail } from 'lucide-react-native';
-import { useRef, useState } from 'react';
-import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
-import { height, size, width } from 'react-native-responsive-sizes';
+// Firebase v23
+import auth from "@react-native-firebase/auth";
+import firestore from "@react-native-firebase/firestore";
 
-// ✅ React Native Firebase v23 default imports
-import auth from '@react-native-firebase/auth';
-import firestore from '@react-native-firebase/firestore';
-
-import AppBlurBottom from './AppBlurBottom';
-import { googleSignIn } from './GoogleSignUp/googleSignIn';
-import { signUpWithApple } from './signUpWithApple'; // ← Apple helper (RNFB v23)
+import { ChevronRight } from "lucide-react-native";
+import AppBlurBottom from "./AppBlurBottom";
+import { googleSignIn } from "./GoogleSignUp/googleSignIn";
+import { signUpWithApple } from "./signUpWithApple";
 
 export default function AuthHome() {
-  // (Optional) silence RNFB modular deprecation warnings if any third-party lib uses them
   globalThis.RNFB_SILENCE_MODULAR_DEPRECATION_WARNINGS = true;
 
   const router = useRouter();
@@ -32,17 +28,15 @@ export default function AuthHome() {
     return fn?.();
   };
 
-  // Optional: use this if you want to auto-route after sign-in by checking a Firestore flag
   const decideNext = async () => {
     try {
       const user = auth().currentUser;
       if (!user) return;
-      const snap = await firestore().collection('users').doc(user.uid).get();
+      const snap = await firestore().collection("users").doc(user.uid).get();
       const completed = !!snap.data()?.onboardingCompleted;
-      router.replace(completed ? '/(tabs)' : '/(auth)/signUp');
-    } catch (e) {
-      console.warn('Failed to read onboarding flag:', e);
-      router.replace('/(auth)/signUp');
+      router.replace(completed ? "/(tabs)" : "/(auth)/signUp");
+    } catch {
+      router.replace("/(auth)/signUp");
     }
   };
 
@@ -52,21 +46,8 @@ export default function AuthHome() {
     try {
       const userCred = await signUpWithApple();
       if (userCred) {
-        const email = userCred.user?.email ?? auth().currentUser?.email ?? '';
-        console.log('[AUTH] Apple email:', email);
-
-        // Push to onboarding with prefilled email
-        router.push({
-          pathname: '/(auth)/signUp',
-          params: { Email: email, method: 'apple' },
-        });
-
-        // Or auto-decide:
-        // await decideNext();
-      }
-    } catch (e) {
-      if (e?.name !== 'APPLE_SIGNIN_CANCELED' && e?.message !== 'canceled') {
-        console.error('Apple sign-in failed:', e);
+        const email = userCred.user?.email ?? auth().currentUser?.email ?? "";
+        router.push({ pathname: "/(auth)/signUp", params: { Email: email, method: "apple" } });
       }
     } finally {
       setLoading((s) => ({ ...s, apple: false }));
@@ -77,22 +58,10 @@ export default function AuthHome() {
     if (loading.google) return;
     setLoading((s) => ({ ...s, google: true }));
     try {
-      const cred = await googleSignIn(); // { userCredential, idToken, accessToken }
+      const cred = await googleSignIn();
       if (cred) {
-        const email = cred?.userCredential?.user?.email ?? auth().currentUser?.email ?? '';
-        console.log('[AUTH] Google email:', email);
-
-        router.push({
-          pathname: '/(auth)/signUp',
-          params: { Email: email, method: 'google' },
-        });
-
-        // Or:
-        // await decideNext();
-      }
-    } catch (e) {
-      if (e?.name !== 'GOOGLE_SIGNIN_CANCELED' && e?.message !== 'canceled') {
-        console.error('Google sign-in failed:', e);
+        const email = cred?.userCredential?.user?.email ?? auth().currentUser?.email ?? "";
+        router.push({ pathname: "/(auth)/signUp", params: { Email: email, method: "google" } });
       }
     } finally {
       setLoading((s) => ({ ...s, google: false }));
@@ -103,167 +72,143 @@ export default function AuthHome() {
     if (loading.email) return;
     setLoading((s) => ({ ...s, email: true }));
     try {
-      router.replace('/(auth)/Login');
+      router.replace("/(auth)/Login");
     } finally {
       setLoading((s) => ({ ...s, email: false }));
     }
   };
 
-  const source = require('../../assets/AnimationSignUp.mov');
+  // 🎥 expo-video player
+  const source = require("../../assets/AnimationSignUp.mov");
   const player = useVideoPlayer(source, (p) => {
-    p.loop = true;
+    p.audioMixingMode = "mixWithOthers"; // keep Spotify playing
     p.muted = true;
+    p.volume = 0;
+    p.loop = true;
+    p.staysActiveInBackground = true;     // requires config plugin
+    p.showNowPlayingNotification = false; // no system banner
     p.play();
   });
 
   return (
-    <View style={{ height: '100%', width: '100%', backgroundColor: '#fff' }}>
+    <View style={{ height: "100%", width: "100%", backgroundColor: "#fff" }}>
       <StatusBar style="dark" />
 
-      {/* BG animation */}
-      <View style={{ alignItems: 'center', marginTop: height(-5) }}>
+      {/* Background video */}
+      <View style={{ alignItems: "center", marginTop: height(-5) }}>
         <VideoView
           player={player}
-          style={{
-            alignSelf: 'center',
-            height: '100%',
-            width: '100%',
-            marginTop: height(-5),
-          }}
+          style={{ alignSelf: "center", height: "100%", width: "100%", marginTop: height(-5) }}
           contentFit="contain"
           nativeControls={false}
+          playsInline
+          allowsPictureInPicture={false}
+          startsPictureInPictureAutomatically={false}
+          onPictureInPictureStart={async () => { try { await player.stopPictureInPicture(); } catch {} }}
         />
       </View>
 
+      {/* soft gradient for legibility */}
+      <View
+        pointerEvents="none"
+        style={{
+          position: "absolute",
+          bottom: 0,
+          left: 0,
+          right: 0,
+          height: height(28),
+          backgroundColor: "transparent",
+        }}
+      >
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: "rgba(255,255,255,0.0)",
+          }}
+        />
+        <View
+          style={{
+            height: "70%",
+            backgroundColor: "rgba(255,255,255,0.9)",
+          }}
+        />
+      </View>
+
+      {/* Headline */}
+      <Text
+        style={{
+          fontSize: size(34),
+          position: "absolute",
+          width: "85%",
+         
+          bottom: height(20),
+          zIndex: 1000,
+          fontWeight: "800",
+          alignSelf: "center",
+          lineHeight: size(38),
+          color: "#111",
+          textShadowColor: "rgba(0,0,0,0.06)",
+          textShadowOffset: { width: 0, height: 2 },
+          textShadowRadius: 8,
+        }}
+      >
+      Track your fridge, track your calories.
+      </Text>
+
       {/* Actions */}
-      <View style={styles.actions}>
-        {/* Apple */}
-        <Pressable
-          onPress={() => tap(onApple)}
-          disabled={loading.apple}
+      <View
+        style={{
+          position: "absolute",
+          flexDirection: "row",
+          alignSelf: "center",
+          zIndex: 1000,
+          bottom: height(16),
+          width: "85%",
+        }}
+      >
+        <TouchableOpacity
+          onPressIn={() => { router.push("/(auth)/signUp"); }}
           style={{
-            height: size(55),
-            width: '90%',
-            marginBottom: height(1),
-            borderRadius: 20,
-            alignItems: 'center',
-            justifyContent: 'center',
-            flexDirection: 'row',
-            backgroundColor: '#000',
-            shadowColor: '#000',
-            shadowOpacity: 0.15,
-            shadowRadius: 6,
-            shadowOffset: { width: 0, height: 4 },
-            elevation: 8,
-            opacity: loading.apple ? 0.6 : 1,
+            height: size(60),
+            left: width(0),
+            position: "absolute",
+            width: size(150),
+            borderRadius: size(16),
+            paddingHorizontal: size(20),
+            alignItems: "center",
+            flexDirection: "row",
           }}
         >
-          <View style={{ height: size(20), width: size(20), marginRight: width(4) }}>
-            <Image
-              source={{ uri: 'https://cdn.brandfetch.io/apple.com/w/419/h/512/theme/light/logo?c=1idHhyM4UatCQKFblcg' }}
-              style={{ height: '100%', width: '100%' }}
-              contentFit="contain"
-            />
-          </View>
-          <Text style={[styles.btnText, { color: '#fff', fontSize: size(16), fontFamily: 'Open-Sans-SemiBold' }]}>
-            Continue with Apple
-          </Text>
-        </Pressable>
+          <Text style={{ fontSize: size(14), fontWeight: "800" }}>Get started</Text>
+          <ChevronRight size={22} color={"#000"} style={{ position: "absolute", right: width(5) }} />
+        </TouchableOpacity>
 
-        {/* Google */}
-        <Pressable
-          onPress={() => tap(onGoogle)}
-          disabled={loading.google}
+        <TouchableOpacity
+          onPressIn={onEmail}
           style={{
-            height: size(55),
-            width: '90%',
-            borderRadius: 20,
-            alignItems: 'center',
-            marginBottom: height(1),
-            justifyContent: 'center',
-            flexDirection: 'row',
-            backgroundColor: '#000',
-            shadowColor: '#000',
-            shadowOpacity: 0.15,
-            shadowRadius: 6,
-            shadowOffset: { width: 0, height: 4 },
-            elevation: 8,
-            opacity: loading.google ? 0.6 : 1,
+            height: size(60),
+            right: width(0),
+            position: "absolute",
+            width: size(170),
+            borderRadius: size(16),
+            paddingHorizontal: size(20),
+            alignItems: "center",
+            flexDirection: "row",
+            backgroundColor: "#151515",
+            ...Platform.select({
+              ios: { shadowColor: "#000", shadowOffset: { width: 2, height: 1 }, shadowOpacity: 0.5, shadowRadius: 10 },
+              android: { elevation: 8, shadowColor: "#ccc" },
+            }),
           }}
         >
-          <View style={{ height: size(20), width: size(20), marginRight: width(4) }}>
-            <Image
-              source={{ uri: 'https://cdn.brandfetch.io/id6O2oGzv-/w/800/h/817/theme/dark/symbol.png?c=1bxid64Mup7aczewSAYMX&t=1755835725776' }}
-              style={{ height: '100%', width: '100%' }}
-              contentFit="contain"
-            />
-          </View>
-          <Text style={[styles.btnText, { color: '#fff', fontSize: size(16), fontFamily: 'Open-Sans-SemiBold' }]}>
-            Continue with Google
+          <Text numberOfLines={1} style={{ fontSize: size(14), fontWeight: "800", marginLeft: width(1), color: "#fff" }}>
+            Log In
           </Text>
-        </Pressable>
-
-        {/* Email */}
-        <Pressable
-          onPress={() => tap(onEmail)}
-          disabled={loading.email}
-          style={[styles.emailBtn, { opacity: loading.email ? 0.6 : 1 }]}
-        >
-          <Mail size={25} color={'#000'} style={{ marginRight: width(4) }} />
-          <Text style={[styles.btnText, { color: '#000', fontSize: size(16), fontFamily: 'Open-Sans-SemiBold' }]}>
-            Continue with email
-          </Text>
-        </Pressable>
-
-        <Text style={styles.legal}>
-          By continuing, you agree to our{' '}
-          <Text style={styles.link} onPress={() => Linking.openURL('https://yourdomain.com/terms')}>Terms</Text>{' '}
-          and{' '}
-          <Text style={styles.link} onPress={() => Linking.openURL('https://yourdomain.com/privacy')}>Privacy Policy</Text>.
-        </Text>
+          <ChevronRight size={22} color={"#fff"} style={{ position: "absolute", right: width(5) }} />
+        </TouchableOpacity>
       </View>
 
       <AppBlurBottom />
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  safe: { width: '100%', height: '100%', backgroundColor: '#FFCF2D' },
-  container: { width: '100%', height: '100%', backgroundColor: '#FFCF2D', alignItems: 'center' },
-  lottie: { position: 'absolute', width: width(100), height: height(100) },
-  tagline: { width: 400, marginTop: height(-5), textAlign: 'center', fontFamily: 'Open-Sans', fontSize: size(20) },
-  subtle: { marginTop: height(0.5), fontSize: size(12), color: '#333', opacity: 0.8 },
-  actions: { position: 'absolute', zIndex: 1000, bottom: height(8), width: '100%', alignItems: 'center' },
-  btn: {
-    height: size(55),
-    width: '90%',
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexDirection: 'row',
-    shadowColor: '#000',
-    shadowOpacity: 0.15,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 8,
-  },
-  emailBtn: {
-    height: size(55),
-    width: '90%',
-    borderRadius: 20,
-    alignItems: 'center',
-    marginBottom: height(1),
-    justifyContent: 'center',
-    flexDirection: 'row',
-    backgroundColor: '#fff',
-    shadowColor: '#000',
-    shadowOpacity: 0.15,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 8,
-  },
-  btnText: { fontSize: size(16), fontFamily: 'Open-Sans-SemiBold' },
-  legal: { width: '90%', textAlign: 'center', fontSize: size(11), color: '#333', marginTop: height(1.5), opacity: 0.8 },
-  link: { textDecorationLine: 'underline' },
-});

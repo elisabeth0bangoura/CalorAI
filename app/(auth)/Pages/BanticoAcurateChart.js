@@ -164,7 +164,7 @@ export default function BanticoAcurateChart({
 
       {/* Chart */}
       <View style={{ marginTop: height(5), backgroundColor: "#151515", borderRadius: 15, padding: 12 }}>
-        <Svg viewBox={`0 0 ${vbWidth} ${vbHeight}`} style={{ width: "100%", height: 160 }}>
+        <Svg viewBox={`0 0 ${vbWidth} ${vbHeight}`} style={{top: height(5), width: "100%", height: 160 }}>
           <Defs>
             <LinearGradient id="fade" x1="0" y1="0" x2="0" y2="1">
               <Stop offset="0" stopColor={banticoColor} stopOpacity="0.18" />
@@ -207,10 +207,10 @@ export default function BanticoAcurateChart({
           <View style={{ alignItems: "center" }}>
             <View
               style={{
-                height: size(25),
-                width: size(25),
+                height: size(15),
+                width: size(15),
                 backgroundColor: banticoColor,
-                borderRadius: size(25) / 2,
+                borderRadius: size(15) / 2,
               }}
             />
             <Text
@@ -227,10 +227,10 @@ export default function BanticoAcurateChart({
           <View style={{ alignItems: "center" }}>
             <View
               style={{
-                height: size(25),
-                width: size(25),
+                height: size(15),
+                width: size(15),
                 backgroundColor: othersColor,
-                borderRadius: size(25) / 2,
+                borderRadius: size(15) / 2,
               }}
             />
             <Text

@@ -1,4 +1,4 @@
-import { Text, TouchableOpacity, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { height, size, width } from "react-native-responsive-sizes";
 import { useOnboarding } from "../../Context/OnboardingContext";
 
@@ -23,7 +23,7 @@ export default function HaveYouUsedAnyOther() {
         }}
       >
         {/* YES */}
-        <TouchableOpacity
+        <Pressable
           onPress={() => setHaveYouUsedAnyOtherPlatform("yes")}
           activeOpacity={0.9}
           style={{
@@ -50,10 +50,10 @@ export default function HaveYouUsedAnyOther() {
           >
             Yes
           </Text>
-        </TouchableOpacity>
+        </Pressable>
 
         {/* NO */}
-        <TouchableOpacity
+        <Pressable
           onPress={() => setHaveYouUsedAnyOtherPlatform("no")}
           activeOpacity={0.9}
           style={{
@@ -79,7 +79,7 @@ export default function HaveYouUsedAnyOther() {
           >
             No
           </Text>
-        </TouchableOpacity>
+        </Pressable>
       </View>
     </>
   );

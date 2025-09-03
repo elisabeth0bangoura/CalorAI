@@ -26,7 +26,7 @@ import { height, size, width } from "react-native-responsive-sizes";
  *  - style: optional wrapper style
  */
 export default function LoseMoreWIthBantico({
-  title = "See up to 4× more progress with Bantico vs other apps",
+  title = "See up to 5× more progress with Bantico vs other apps",
   leftTitle = "With other apps",
   rightTitle = "With Bantico",
   controlPercent = 15,

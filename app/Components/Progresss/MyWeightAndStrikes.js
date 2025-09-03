@@ -1,6 +1,10 @@
 // MyWeightAndStrikesComponent.js
+import { useDailyLeft } from '@/app/Context/DailyLeftContext';
+import { useDailyTargets } from '@/app/Context/DailyPlanProvider';
 import { useSheets } from '@/app/Context/SheetsContext';
 import { useStreak } from '@/app/Context/StreakContext';
+import { getAuth } from '@react-native-firebase/auth';
+import { doc, getFirestore, onSnapshot } from '@react-native-firebase/firestore';
 import { Flame } from 'lucide-react-native';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
@@ -13,8 +17,17 @@ import WeekDots from './WeekDots';
 
 
 
+const MS_DAY = 24 * 60 * 60 * 1000;
+const sod = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()); // start of local day
+const clamp0 = (x) => (x < 0 ? 0 : x);
 
-
+// Firestore Timestamp | Date | number | string -> Date
+const toDateSafe = (v) =>
+  v?.toDate?.() ??
+  (v instanceof Date ? v :
+   typeof v === 'number' ? new Date(v) :
+   typeof v === 'string' ? new Date(v) :
+   v?.seconds ? new Date(v.seconds * 1000) : null);
 
 
 
@@ -26,11 +39,92 @@ export default function MyWeightAndStrikesComponent() {
 
   const anim = useRef(new Animated.Value(ratio)).current;
 
+    const {targets } = useDailyTargets();
+  const { left, caloriesToday, carbsToday, today } = useDailyLeft();
+    const [userDoc, setUserDoc] = useState(null);
+
+
+    const [daysLeft, setDaysLeft] = useState(null);   // 6..0
+  const [nextCheckDate, setNextCheckDate] = useState(null); // Date
+  const [label, setLabel] = useState('');           // "in 6d" | "today"
+  const [error, setError] = useState(null);
+
+
 
   const {
     register, present, dismiss, dismissAll,
     isS7Open, setIsS7Open,
   } = useSheets();
+
+
+
+  console.log({
+  targets
+  })
+
+
+
+    useEffect(() => {
+    const uid = getAuth().currentUser?.uid;
+
+    
+    const db = getFirestore();
+    const ref = doc(db, 'users', uid);
+
+    const unsub = onSnapshot(
+      ref,
+      (snap) => {
+        if (snap.exists()) {
+         setUserDoc({ id: snap.id, ...snap.data() });
+     
+          
+        } else {
+         
+          console.log('User doc does not exist');
+        }
+       
+      }
+    );
+
+    return () => unsub();
+  }, []);
+
+
+useEffect(() => {
+  const uid = getAuth().currentUser?.uid;
+  if (!uid) return;
+
+  const ref = doc(getFirestore(), 'users', uid);
+
+  const unsub = onSnapshot(
+    ref,
+    (snap) => {
+      if (!snap.exists()) return;
+
+      const data = { id: snap.id, ...snap.data() };
+      setUserDoc(data);
+
+      // === weekly progress check (resets every 7 days) ===
+      const base = toDateSafe(data?.updatedAt) || new Date(); // signup/updated time
+      const today0 = sod(new Date());
+      const base0  = sod(base);
+
+      const daysSince = clamp0(Math.floor((today0 - base0) / MS_DAY)); // whole days since
+      const cycle = daysSince % 7;               // 0..6
+      const left  = (6 - cycle + 7) % 7;         // 6..0  (0 = today)
+
+      setDaysLeft(left);
+      setNextCheckDate(new Date(today0.getTime() + left * MS_DAY));
+      setLabel(left === 0 ? 'today' : `${left}d`);
+      setError(null);
+    },
+    (e) => setError(String(e?.message || e))
+  );
+
+  return () => unsub();
+}, []);
+
+
 
 
 
@@ -240,7 +334,7 @@ export default function MyWeightAndStrikesComponent() {
         <Text style={{ marginTop: height(2), fontSize: size(16), fontWeight: '800', color: '#BCC1CA' }}>
           My Weight
         </Text>
-        <Text style={{ fontSize: size(35), fontWeight: '800', color: '#000', marginTop: height(1) }}>65 kg</Text>
+        <Text style={{ fontSize: size(35), fontWeight: '800', color: '#000', marginTop: height(1) }}>{userDoc?.kg} kg</Text>
 
 
          <View style={{
@@ -263,7 +357,7 @@ export default function MyWeightAndStrikesComponent() {
             color: '#000',
           }}
         >
-          progress check - in 6d
+          progress check - in {daysLeft}d
         </Text>
       </TouchableOpacity>
 

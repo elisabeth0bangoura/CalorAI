@@ -35,7 +35,7 @@ export default function TwoRowMonthlyHeatmap({
   /* ---------------- Firestore live data ---------------- */
   useEffect(() => {
     if (!db || !userId) return;
-    const ref = collection(db, `users/${userId}/Inventory`);
+    const ref = collection(db, `users/${userId}/RecentlyEaten`);
     const q = query(ref, orderBy(createdAtField, 'asc'));
     const unsub = onSnapshot(q, (snap) => {
       const m = {};

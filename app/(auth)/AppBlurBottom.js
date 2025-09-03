@@ -29,7 +29,7 @@ export default function AppBlurBottom() {
           bottom: 0,
           zIndex: 10,  
           width: "100%", 
-          height: height(50)
+          height: height(52)
   }}
       >
         <MaskedView

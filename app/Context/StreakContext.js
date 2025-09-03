@@ -68,7 +68,7 @@ export function StreakProvider({ children, weekStartsOn = 1 }) {
     const end   = endOfWeek(now, weekStartsOn);
 
     const qy = query(
-      collection(db, `users/${uid}/Inventory`),
+      collection(db, `users/${uid}/RecentlyEaten`),
       where('created_at', '>=', Timestamp.fromDate(start)),
       where('created_at', '<',  Timestamp.fromDate(end)),
       orderBy('created_at', 'asc'),

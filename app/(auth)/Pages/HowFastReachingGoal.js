@@ -1,9 +1,9 @@
 // DesiredWeight.js (HowFastReachingGoal)
 import Slider from "@react-native-community/slider"; // npx expo install @react-native-community/slider
 import { Image } from "expo-image";
-import { useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { height, size, width } from "react-native-responsive-sizes";
+import { useOnboarding } from "../../Context/OnboardingContext";
 
 export default function HowFastReachingGoal({
   unit = "kg",
@@ -14,7 +14,13 @@ export default function HowFastReachingGoal({
   initial = 1.0,
   onChange,
 }) {
-  const [value, setValue] = useState(initial);
+
+  const {
+    HowFast, setHowFast
+  } = useOnboarding()
+
+
+
   const fmt = (v) => `${Number(v).toFixed(1)} ${unit}`;
 
   return (
@@ -42,7 +48,7 @@ export default function HowFastReachingGoal({
         Loss weight speed per week
       </Text>
 
-      {/* Current value */}
+      {/* Current HowFast */}
       <Text
         style={{
           fontSize: size(44),
@@ -51,7 +57,7 @@ export default function HowFastReachingGoal({
           marginTop: height(1),
         }}
       >
-        {fmt(value)}
+        {fmt(HowFast)}
       </Text>
 
       {/* Emoji cues + slider */}
@@ -104,10 +110,10 @@ export default function HowFastReachingGoal({
         {/* slider with center tick */}
         <View style={{ position: "relative" }}>
           <Slider
-            value={value}
+            value={HowFast}
             onValueChange={(v) => {
               const n = Number(v.toFixed(1));
-              setValue(n);
+              setHowFast(n);
             }}
             onSlidingComplete={(v) => onChange?.(Number(v.toFixed(1)))}
             minimumValue={min}
@@ -151,7 +157,7 @@ export default function HowFastReachingGoal({
         {/* Recommended pill */}
         <Pressable
           onPress={() => {
-            setValue(recommended);
+            setHowFast(recommended);
             onChange?.(recommended);
           }}
           style={{

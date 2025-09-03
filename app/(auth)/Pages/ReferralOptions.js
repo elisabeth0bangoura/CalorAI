@@ -1,9 +1,10 @@
 import { Image } from "expo-image";
 import { MoreHorizontalIcon, Users } from "lucide-react-native";
-import { FlatList, ScrollView, Text, TouchableOpacity } from "react-native";
+import { FlatList, Pressable, ScrollView, Text } from "react-native";
 import { height, size, width } from "react-native-responsive-sizes";
 import AppBlurHeader from "../../AppBlurHeader";
 import { useOnboarding } from "../../Context/OnboardingContext";
+
 
 
 
@@ -60,7 +61,7 @@ export default function ReferralOptionsList() {
     }}>
       <Text
         style={{
-          fontSize: 28,
+          fontSize: size(28),
           paddingTop: height(13),
           marginBottom: height(5),
           marginLeft: width(5),
@@ -88,7 +89,7 @@ export default function ReferralOptionsList() {
     const imageSource = localSource ? localSource : item.icon ? { uri: item.icon } : null;
 
     return (
-      <TouchableOpacity
+      <Pressable
         onPress={() => setReferral(item.id)}
         style={{
           flexDirection: "row",
@@ -124,7 +125,7 @@ export default function ReferralOptionsList() {
         >
           {item.label}
         </Text>
-      </TouchableOpacity>
+      </Pressable>
     );
   }}
 />
