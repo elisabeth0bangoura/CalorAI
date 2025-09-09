@@ -8,7 +8,7 @@ import { Alert, Platform, Text, TouchableOpacity, View } from "react-native";
 import { height, size, width } from "react-native-responsive-sizes";
 
 // Firebase v23 (namespaced)
-import firestore, { doc, getFirestore, setDoc } from "@react-native-firebase/firestore";
+import firestore, { addDoc, collection, doc, getFirestore, serverTimestamp, setDoc } from "@react-native-firebase/firestore";
 
 import { Image } from "expo-image";
 import { useOnboarding } from "../../Context/OnboardingContext";
@@ -27,6 +27,13 @@ import { getAuth } from '@react-native-firebase/auth';
 
 export default function SignUpFinishScreen() {
   globalThis.RNFB_SILENCE_MODULAR_DEPRECATION_WARNINGS = true;
+
+const KG_MIN = 30;
+const KG_MAX = 200;
+const LB_PER_KG = 2.20462262;
+const kgToLb = (kg) => kg * LB_PER_KG;
+const lbToKg = (lb) => lb / LB_PER_KG;
+const round1 = (x) => Math.round(x * 10) / 10;
 
 
    const auth = getAuth();
@@ -172,6 +179,14 @@ export default function SignUpFinishScreen() {
     },
     { merge: true }
   );
+  // 1) append a log entry
+      await addDoc(collection(db, 'users', user.uid, 'weightprogrss'), {
+        createdAt: serverTimestamp(),
+        kg: kg,
+        lb:lb,
+        unit: unitSystem,
+        source: 'manual',
+      });
 
 
   router.replace("/(tabs)")

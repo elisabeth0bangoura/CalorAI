@@ -1,49 +1,37 @@
-// PageAfterScan_Scan_Food/LoadingPage.js
+// Barcode/LoadingPage.js
 import { useSheets } from "@/app/Context/SheetsContext";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Animated as RNAnimated, Easing as RNEasing, StyleSheet, Text, View } from "react-native";
-import CircularProgress from "react-native-circular-progress-indicator";
+// ⬇️ swap the heavy component for the lightweight base (no internal animation)
+import { CircularProgressBase } from "react-native-circular-progress-indicator";
 import { height, size } from "react-native-responsive-sizes";
 
-const DEFAULT_MESSAGES = [
-  "Separating ingredients",
-  "Breaking down nutritions",
-  "Searching nutrition database",
-];
+const StageText = memo(function StageText({ label }) {
+  return <Text style={styles.stageText}>{label}</Text>;
+});
 
-/**
- * One-way, no-loop loader with 3 phases:
- * 0 → 20 (intro) → 80 (cruise & hold) → 100 (finish when isDone=true)
- * - No reAnimate() calls (avoids resets).
- * - We change `value` prop and the library animates between values.
- * - Center number is tweened in JS to match the ring.
- */
 export default function LoadingPage({
-  messages = DEFAULT_MESSAGES,
-  isDone = false,   // flip true when data is ready
+  isDone = false,
   onDone,
-  introMs = 900,    // 0 → 20
-  cruiseMs = 5000,  // 20 → 80
-  doneMs = 900,     // → 100
-  msgStepMs = 1200,
+  introMs = 900,
+  cruiseMs = 5000,
+  doneMs = 900,
   minShowMs = 600,
 }) {
   const { isS3Open } = useSheets();
 
-  // what the ring animates to
   const [ringValue, setRingValue] = useState(0);
-  // what we show in the center (synced with ring phases)
   const [display, setDisplay] = useState(0);
-  const [msgIndex, setMsgIndex] = useState(0);
+  const [stageLabel, setStageLabel] = useState("Separating ingredients");
+  const [isFinished, setIsFinished] = useState(false);
 
-  // phase machine: 'idle' | 'to20' | 'to80' | 'hold80' | 'to100' | 'done'
+  const stageRef = useRef(0); // 0,1,2
   const phaseRef = useRef("idle");
   const timersRef = useRef([]);
   const mountedAtRef = useRef(0);
-  const cancelledRef = useRef(false);
   const currentRef = useRef(0);
-
-  const slideAnim = useRef(new RNAnimated.Value(0)).current;
+  const numAnim = useMemo(() => new RNAnimated.Value(0), []);
+  const listenerIdRef = useRef(null);
 
   const pushT = (t) => {
     timersRef.current.push(t);
@@ -54,115 +42,128 @@ export default function LoadingPage({
     timersRef.current = [];
   }, []);
 
-  const runIn = useCallback(() => {
-    slideAnim.setValue(0);
-    RNAnimated.timing(slideAnim, {
-      toValue: 1,
-      duration: 300,
-      easing: RNEasing.out(RNEasing.cubic),
-      useNativeDriver: true,
-    }).start();
-  }, [slideAnim]);
+  const stopAndClean = useCallback(() => {
+    try { numAnim.stopAnimation(); } catch {}
+    if (listenerIdRef.current != null) {
+      numAnim.removeListener(listenerIdRef.current);
+      listenerIdRef.current = null;
+    }
+    clearAll();
+  }, [numAnim, clearAll]);
 
-  // message rotator (independent, no loops once unmounted)
-  const startMsgLoop = useCallback(() => {
-    setMsgIndex(0);
-    runIn();
-    const tick = () => {
-      if (cancelledRef.current || phaseRef.current === "done") return;
-      setMsgIndex((i) => (i + 1) % Math.max(1, messages.length));
-      runIn();
-      pushT(setTimeout(tick, msgStepMs));
-    };
-    pushT(setTimeout(tick, msgStepMs));
-  }, [messages.length, msgStepMs, runIn]);
+  // animate number only (ring will snap via value change)
+  const animateNumber = useCallback(
+    (to, ms, after) => {
+      numAnim.stopAnimation((last) => {
+        if (typeof last === "number") currentRef.current = last;
+        numAnim.setValue(currentRef.current);
+        RNAnimated.timing(numAnim, {
+          toValue: to,
+          duration: ms,
+          easing: RNEasing.inOut(RNEasing.cubic),
+          useNativeDriver: false,
+        }).start(({ finished }) => {
+          if (finished && after) after();
+        });
+      });
+    },
+    [numAnim]
+  );
 
-  // tween center number (we control timing; ring animates via prop changes)
-  const animateNumber = useCallback((to, ms, after) => {
-    const from = currentRef.current;
-    const start = Date.now();
-    const step = () => {
-      if (cancelledRef.current || phaseRef.current === "done") return;
-      const r = Math.min(1, (Date.now() - start) / ms);
-      const val = Math.round(from + (to - from) * r);
-      currentRef.current = val;
-      setDisplay(val);
-      if (r < 1) {
-        pushT(setTimeout(step, 16));
-      } else if (after) {
-        after();
+  // listener: update number; update label only at 30/60 thresholds
+  useEffect(() => {
+    if (listenerIdRef.current != null) {
+      numAnim.removeListener(listenerIdRef.current);
+      listenerIdRef.current = null;
+    }
+    const id = numAnim.addListener(({ value }) => {
+      const v = Math.round(value);
+      currentRef.current = v;
+      if (isFinished) return;
+      setDisplay(v);
+
+      const s = v < 30 ? 0 : v < 60 ? 1 : 2;
+      if (s !== stageRef.current) {
+        stageRef.current = s;
+        if (s === 0) setStageLabel("Separating ingredients");
+        else if (s === 1) setStageLabel("Breaking down nutritions");
+        else setStageLabel("Calculating nutritions");
+      }
+    });
+    listenerIdRef.current = id;
+
+    return () => {
+      if (listenerIdRef.current != null) {
+        numAnim.removeListener(listenerIdRef.current);
+        listenerIdRef.current = null;
       }
     };
-    pushT(setTimeout(step, 16));
-  }, []);
+  }, [numAnim, isFinished]);
 
-  // kick off phases (no repetition; only forward)
+  // phases: one-way only; ring snaps at phase boundaries
   const startPhases = useCallback(() => {
     phaseRef.current = "to20";
-    setRingValue(20);
+    setRingValue(20); // ring snaps (no internal animation)
     animateNumber(20, introMs, () => {
-      if (phaseRef.current !== "to20") return;
+      if (phaseRef.current !== "to20" || isFinished) return;
       phaseRef.current = "to80";
-      setRingValue(80);
+      setRingValue(80); // ring snaps
       animateNumber(80, cruiseMs, () => {
-        if (phaseRef.current === "to80") {
-          phaseRef.current = "hold80"; // wait here for isDone
+        if (phaseRef.current === "to80" && !isFinished) {
+          phaseRef.current = "hold80";
         }
       });
     });
-  }, [animateNumber, introMs, cruiseMs]);
+  }, [animateNumber, introMs, cruiseMs, isFinished]);
 
-  // finish (called once)
   const finishNow = useCallback(() => {
-    if (phaseRef.current === "done" || phaseRef.current === "to100") return;
-
+    if (phaseRef.current === "done" || phaseRef.current === "to100" || isFinished) return;
     const elapsed = Date.now() - (mountedAtRef.current || 0);
     const wait = Math.max(0, minShowMs - elapsed);
 
     pushT(
       setTimeout(() => {
         phaseRef.current = "to100";
-        setRingValue(100);
-        // start from whatever we currently show (0..80)
-        const startFrom = currentRef.current;
+        setRingValue(100); // ring snaps
         animateNumber(100, doneMs, () => {
           phaseRef.current = "done";
+          setIsFinished(true);
+          setDisplay(100);
+          stopAndClean(); // stop timers + listener
           onDone && onDone();
         });
       }, wait)
     );
-  }, [animateNumber, doneMs, minShowMs, onDone]);
+  }, [animateNumber, doneMs, minShowMs, onDone, stopAndClean, isFinished]);
 
   // lifecycle
   useEffect(() => {
     if (!isS3Open) return;
     mountedAtRef.current = Date.now();
-    cancelledRef.current = false;
+    setIsFinished(false);
     clearAll();
 
-    // init
+    stageRef.current = 0;
+    phaseRef.current = "idle";
     currentRef.current = 0;
     setRingValue(0);
     setDisplay(0);
+    setStageLabel("Separating ingredients");
+    numAnim.setValue(0);
 
-    startMsgLoop();
     startPhases();
 
     return () => {
-      cancelledRef.current = true;
-      clearAll();
       phaseRef.current = "idle";
+      stopAndClean();
     };
-  }, [isS3Open, startMsgLoop, startPhases, clearAll]);
+  }, [isS3Open, startPhases, clearAll, numAnim, stopAndClean]);
 
-  // advance to 100 when data is ready
+  // move to 100 when ready
   useEffect(() => {
     if (!isS3Open) return;
     if (isDone) finishNow();
   }, [isDone, isS3Open, finishNow]);
-
-  const translateY = slideAnim.interpolate({ inputRange: [0, 1], outputRange: [-14, 0] });
-  const opacity = slideAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 1] });
 
   const RADIUS = 120;
 
@@ -170,26 +171,25 @@ export default function LoadingPage({
     <View style={{ height: height(100), width: "100%" }}>
       <View style={styles.container}>
         <View style={{ alignSelf: "center", width: RADIUS * 2, height: RADIUS * 2, position: "relative" }}>
-          {/* IMPORTANT: we only change `value` forward; no reAnimate() calls */}
-          <CircularProgress
+          {/* Lightweight ring: zero-duration (no internal animation) */}
+          <CircularProgressBase
             value={ringValue}
             maxValue={100}
             radius={RADIUS}
-            duration={
-              phaseRef.current === "to20" ? introMs :
-              phaseRef.current === "to80" ? cruiseMs :
-              phaseRef.current === "to100" ? doneMs : 200
-            }
+            duration={0}                // ⬅️ no internal animations
             showProgressValue={false}
+            activeStrokeColor={"#000"}
+            activeStrokeWidth={10}
+            inActiveStrokeColor={"#E6ECF2"}
+            inActiveStrokeOpacity={0.35}
+            inActiveStrokeWidth={10}
           />
           <View style={styles.centerWrap} pointerEvents="none">
             <Text style={styles.centerNumber}>{String(display)}</Text>
           </View>
         </View>
 
-        <RNAnimated.Text style={[styles.stageText, { opacity, transform: [{ translateY }] }]}>
-          {messages[msgIndex] ?? ""}
-        </RNAnimated.Text>
+        <StageText label={stageLabel} />
       </View>
     </View>
   );

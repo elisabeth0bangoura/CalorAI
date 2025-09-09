@@ -20,6 +20,8 @@ export function SheetsProvider({ children }) {
   const [isS6Open, setIsS6Open] = useState(false);
   // ✅ : Edit PageAfterScan (second editor sheet)
   const [isS7Open, setIsS7Open] = useState(false);
+    const [isS8Open, setIsS8Open] = useState(false);
+    const [isS9Open, setIsS9Open] = useState(false);
 
   // ---- Central flag switcher
   const setOpenFlag = (key, open) => {
@@ -33,6 +35,10 @@ export function SheetsProvider({ children }) {
       case "s6": return setIsS6Open(open);
       // ✅ : Edit PageAfterScan (second)
       case "s7": return setIsS7Open(open);
+
+       case "s8": return setIsS8Open(open);
+      case "s9": return setIsS9Open(open);
+  
       default: return;
     }
   };
@@ -55,18 +61,22 @@ export function SheetsProvider({ children }) {
     });
   };
 
+
+ 
   const value = useMemo(
     () => ({
       register, present, dismiss, dismissAll,
       isS1Open, isS2Open, isS3Open, isS4Open, isS5Open,
       setIsS1Open, setIsS2Open, setIsS3Open, setIsS4Open, setIsS5Open,
+        isS8Open, setIsS8Open,
+        isS9Open, setIsS9Open,
 
       // ✅ : Edit PageAfterScan
-      isS6Open, setIsS6Open,
+       setIsS6Open,
       // ✅ : Edit PageAfterScan (second)
       isS7Open, setIsS7Open,
     }),
-    [isS1Open, isS2Open, isS3Open, isS4Open, isS5Open, isS6Open, isS7Open]
+    [isS1Open, isS2Open, isS3Open, isS4Open, isS5Open, isS6Open, isS7Open, isS8Open, isS9Open, setIsS9Open]
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

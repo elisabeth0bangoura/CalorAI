@@ -1,3 +1,7 @@
+import { useCurrentScannedItemId } from "@/app/Context/CurrentScannedItemIdContext";
+import { useScanResults } from "@/app/Context/ScanResultsContext";
+import { useSheets } from "@/app/Context/SheetsContext";
+import { getAuth } from "@react-native-firebase/auth";
 import { doc, getFirestore, setDoc } from "@react-native-firebase/firestore";
 import storage from "@react-native-firebase/storage";
 import axios from "axios";
@@ -5,14 +9,6 @@ import { CameraView, useCameraPermissions } from "expo-camera";
 import React, { useEffect, useRef, useState } from "react";
 import { Alert, Text, TouchableOpacity, View } from "react-native";
 import { height, size, width } from "react-native-responsive-sizes";
-
-// contexts
-import { useCurrentScannedItemId } from "@/app/Context/CurrentScannedItemIdContext";
-import { useScanResults } from "@/app/Context/ScanResultsContext";
-import { useSheets } from "@/app/Context/SheetsContext";
-
-// loader
-import { getAuth } from "@react-native-firebase/auth";
 import LoadingPage_ExpirationDate from "./LoadingPage_ExpirationDate";
 
 const OPENAI_API_KEY_FALLBACK =
@@ -30,10 +26,13 @@ export default function Scan_AddExpirationDate() {
   const { expirationDate, setExpirationDate } = useScanResults();
   const { dismiss, isS5Open } = useSheets();
 
+  // ✅ Ask for permission only when S5 is open
   useEffect(() => {
-    if (!permission) return;
-    if (!permission.granted && permission.canAskAgain) requestPermission();
-  }, [permission, requestPermission]);
+    if (!isS5Open) return;
+    if (permission && !permission.granted && permission.canAskAgain) {
+      requestPermission();
+    }
+  }, [isS5Open, permission, requestPermission]);
 
   // ✅ cleanup camera when S5 closes
   useEffect(() => {
@@ -46,9 +45,10 @@ export default function Scan_AddExpirationDate() {
   }, [isS5Open]);
 
   const ensurePermission = async () => {
+    if (!isS5Open) return false; // don't do anything if sheet not open
     if (!permission?.granted) {
       const res = await requestPermission();
-      return res.granted;
+      return !!res?.granted;
     }
     return true;
   };
@@ -58,12 +58,7 @@ export default function Scan_AddExpirationDate() {
     const ref = storage().ref(path);
     const task = ref.putFile(fileUri, { contentType: "image/jpeg" });
     return new Promise((resolve, reject) => {
-      task.on(
-        "state_changed",
-        null,
-        reject,
-        async () => resolve(await ref.getDownloadURL())
-      );
+      task.on("state_changed", null, reject, async () => resolve(await ref.getDownloadURL()));
     });
   };
 
@@ -73,18 +68,11 @@ export default function Scan_AddExpirationDate() {
       {
         model: "gpt-4o-mini",
         messages: [
-          {
-            role: "system",
-            content:
-              "You extract expiration dates from food package images. Only return the date as text.",
-          },
+          { role: "system", content: "You extract expiration dates from food package images. Only return the date as text." },
           {
             role: "user",
             content: [
-              {
-                type: "text",
-                text: "Extract the expiration date from this image. Only reply with the date in YYYY-MM-DD format.",
-              },
+              { type: "text", text: "Extract the expiration date from this image. Only reply with the date in YYYY-MM-DD format." },
               { type: "image_url", image_url: { url } },
             ],
           },
@@ -103,9 +91,9 @@ export default function Scan_AddExpirationDate() {
   const onShutter = async () => {
     try {
       if (busy) return;
-
       const ok = await ensurePermission();
       if (!ok) return Alert.alert("Camera", "Please enable camera permission.");
+
       if (!cameraRef.current) return Alert.alert("Camera", "Camera not ready.");
 
       setShowLoader(true);
@@ -113,10 +101,7 @@ export default function Scan_AddExpirationDate() {
       setImageUrl(null);
       setExpirationDate(null);
 
-      const shot = await cameraRef.current.takePictureAsync({
-        quality: 0.9,
-        skipProcessing: true,
-      });
+      const shot = await cameraRef.current.takePictureAsync({ quality: 0.9, skipProcessing: true });
       if (!shot?.uri) throw new Error("No image URI from camera");
 
       const url = await uploadWithNativeStorage(shot.uri);
@@ -124,32 +109,22 @@ export default function Scan_AddExpirationDate() {
 
       const rawText = await askOpenAIForDate(url);
       const dateOnly = String(rawText).trim();
-  
-      // ✅ set context
+
       setExpirationDate(dateOnly);
 
-      console.log("currentItemId ", currentItemId)
-        console.log("[ExpirationDate]", dateOnly);
-
-      // ✅ update Firestore if we have a doc ID
-     if (currentItemId) {
+      if (currentItemId) {
         try {
-            const db = getFirestore();
-            const uid = getAuth().currentUser.uid;
-            const docRef = doc(db, "users", uid, "Inventory", currentItemId);
-            await setDoc(docRef, { expirationDate: dateOnly }, { merge: true });
-            console.log("[Firestore] expirationDate merged for doc:", currentItemId);
+          const db = getFirestore();
+          const uid = getAuth().currentUser.uid;
+          const docRef = doc(db, "users", uid, "Inventory", currentItemId);
+          await setDoc(docRef, { expirationDate: dateOnly }, { merge: true });
+          console.log("[Firestore] expirationDate merged for doc:", currentItemId);
         } catch (err) {
-            console.warn("[Firestore ERR]", err);
+          console.warn("[Firestore ERR]", err);
         }
-        } else {
-        console.log("[Firestore] No currentItemId to update");
-        }
+      }
 
-
-      // ✅ close sheet immediately
       dismiss?.("s5");
-
     } catch (e) {
       console.warn(e);
       Alert.alert("Error", String(e?.message || e));
@@ -159,58 +134,52 @@ export default function Scan_AddExpirationDate() {
     }
   };
 
-  if (!permission?.granted) {
-    return (
-      <View style={{ flex: 1, backgroundColor: "#000", alignItems: "center", justifyContent: "center" }}>
-        <Text style={{ color: "#fff", marginBottom: 12 }}>Camera access is required</Text>
-        <TouchableOpacity
-          onPress={requestPermission}
-          style={{ borderWidth: 2, borderColor: "#fff", paddingHorizontal: 20, paddingVertical: 12, borderRadius: 999 }}
-        >
-          <Text style={{ color: "#fff" }}>Grant Permission</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
-
-  // Loader finishes when we actually have a date
-  const loaderIsDone = !!expirationDate;
-
+  // 🧠 UI — only mount the camera when S5 is open
   return (
     <View style={{ height: height(100), width: width(100), backgroundColor: "#000" }}>
-      <CameraView
-        ref={cameraRef}
-        style={{ height: "100%", width: "100%" }}
-        facing="back"
-        flash="off"
-        autofocus="on"
-      />
-
-      {/* Shutter */}
-      <TouchableOpacity
-        onPress={onShutter}
-        disabled={busy}
-        style={{
-          borderWidth: 6,
-          width: size(90),
-          height: size(90),
-          borderRadius: size(90) / 2,
-          position: "absolute",
-          zIndex: 100,
-          borderColor: busy ? "#888" : "#fff",
-          bottom: height(16),
-          alignSelf: "center",
-        }}
-      />
-
-      {/* Loader */}
-      {showLoader && (
-        <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }}>
-          <LoadingPage_ExpirationDate
-            messages={["Uploading photo", "Analyzing label", "Reading expiration date"]}
-            isDone={loaderIsDone}
-            onDone={() => setShowLoader(false)}
+      {isS5Open ? (
+        <>
+          <CameraView
+            key="s5-camera"                 // key to force clean remount each time
+            ref={cameraRef}
+            style={{ height: "100%", width: "100%" }}
+            facing="back"
+            flash="off"
+            autofocus="on"
           />
+
+          {/* Shutter */}
+          <TouchableOpacity
+            onPress={onShutter}
+            disabled={busy}
+            style={{
+              borderWidth: 6,
+              width: size(90),
+              height: size(90),
+              borderRadius: size(90) / 2,
+              position: "absolute",
+              zIndex: 100,
+              borderColor: busy ? "#888" : "#fff",
+              bottom: height(16),
+              alignSelf: "center",
+            }}
+          />
+
+          {/* Loader */}
+          {showLoader && (
+            <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }}>
+              <LoadingPage_ExpirationDate
+                messages={["Uploading photo", "Analyzing label", "Reading expiration date"]}
+                isDone={!!expirationDate}
+                onDone={() => setShowLoader(false)}
+              />
+            </View>
+          )}
+        </>
+      ) : (
+        // When closed: no CameraView mounted at all
+        <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+          <Text style={{ color: "#fff" }}>Camera paused</Text>
         </View>
       )}
     </View>

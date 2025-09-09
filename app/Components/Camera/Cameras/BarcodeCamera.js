@@ -6,12 +6,15 @@ import React, {
   forwardRef,
   useEffect,
   useImperativeHandle,
+  useMemo,
   useRef,
   useState,
 } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Animated,
+  Easing,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -20,35 +23,39 @@ import {
 import { height, width } from "react-native-responsive-sizes";
 import PageAfterScan from "../PageAfterScan/PageAfterScan_Scan_Barcode/PageAfterScan_Scan_Barcode";
 
+// ✅ Current-item context (so other screens know the saved doc id)
+import { useCurrentScannedItemId } from "@/app/Context/CurrentScannedItemIdContext";
+
 // ✅ Firebase
 import { getAuth } from "@react-native-firebase/auth";
 import {
   addDoc,
   collection,
+  doc,
+  getDoc,
   getFirestore,
   serverTimestamp,
 } from "@react-native-firebase/firestore";
 import storage from "@react-native-firebase/storage";
 
 /* ---------------- helpers ---------------- */
-const LUCIDE_SAFE = new Set([
-  "Utensils","Apple","Banana","Bread","Cheese","Cookie","Candy","Coffee",
-  "Egg","Fish","Milk","Pizza","Sandwich","Salad","Carrot","Drumstick",
-  "CupSoda","Avocado","IceCream",
-]);
-const safeIconName = (s) => (typeof s === "string" && LUCIDE_SAFE.has(s.trim())) ? s.trim() : "Utensils";
-const toNum = (n, d = 0) => Number.isFinite(+n) ? +n : d;
-const toStr = (s, d = "") => (typeof s === "string" && s.trim().length) ? s.trim() : d;
+const toNum = (n, d = 0) => (Number.isFinite(+n) ? +n : d);
+const toStr = (s, d = "") => (typeof s === "string" && s.trim().length ? s.trim() : d);
+const norm = (s) => String(s || "").trim().toLowerCase();
 
 const onlyDigits = (s) => String(s || "").replace(/\D/g, "");
-const asEAN13 = (raw) => { let d = onlyDigits(raw); if (d.length === 12) d = "0" + d; return d; };
+const asEAN13 = (raw) => {
+  let d = onlyDigits(raw);
+  if (d.length === 12) d = "0" + d;
+  return d;
+};
 const isValidEAN13 = (code) => {
   const d = onlyDigits(code);
   if (d.length !== 13) return false;
   let sum = 0;
   for (let i = 0; i < 12; i++) {
     const n = d.charCodeAt(i) - 48;
-    sum += (i % 2 === 0) ? n : n * 3;
+    sum += i % 2 === 0 ? n : n * 3;
   }
   const check = (10 - (sum % 10)) % 10;
   return check === (d.charCodeAt(12) - 48);
@@ -72,12 +79,44 @@ const firstNum = (...vals) => {
   return 0;
 };
 
+/* ---------------- ingredient + alt helpers ---------------- */
+
+// classify candidate kcal vs base kcal (±25 kcal → "similar")
+const deriveBucket = (candKcal, baseKcal) => {
+  if (!Number.isFinite(+candKcal) || !Number.isFinite(+baseKcal)) return "similar";
+  const diff = +candKcal - +baseKcal;
+  if (diff < -25) return "lower";
+  if (diff > 25) return "higher";
+  return "similar";
+};
+
+const normalizeBucket = (b) => {
+  const x = norm(b);
+  return x === "lower" || x === "higher" || x === "similar" ? x : "similar";
+};
+
+// if an alt string starts with the base brand, treat it as same brand
+const splitBrandFromDisplay = (display = "", baseBrand = "") => {
+  const d = String(display || "").trim();
+  const bb = String(baseBrand || "").trim();
+  if (d && bb && norm(d).startsWith(norm(bb) + " ")) {
+    return { brand: bb, rest: d.slice(bb.length).trim() };
+  }
+  return { brand: null, rest: d };
+};
+
 /* ---------------- dual logger ---------------- */
 const mkLogger = (addLog) => (...args) => {
-  const line = args.map((a)=> {
-    if (typeof a === "string") return a;
-    try { return JSON.stringify(a); } catch { return String(a); }
-  }).join(" ");
+  const line = args
+    .map((a) => {
+      if (typeof a === "string") return a;
+      try {
+        return JSON.stringify(a);
+      } catch {
+        return String(a);
+      }
+    })
+    .join(" ");
   console.log(line);
   addLog?.(line);
 };
@@ -108,24 +147,33 @@ If the image is upside down, mentally rotate it. Return JSON ONLY:
     temperature: 0.0,
     messages: [
       { role: "system", content: sys },
-      { role: "user", content: [
+      {
+        role: "user",
+        content: [
           { type: "text", text: "Read digits under the bars. JSON only." },
           { type: "image_url", image_url: { url: imageUrl } },
-        ] },
+        ],
+      },
     ],
   });
 
   for (const p of prompts) {
     const r = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
       body: JSON.stringify(mkBody(p)),
     });
     log("[OCR] status:", r.status);
     if (!r.ok) continue;
     let parsed = {};
-    try { parsed = JSON.parse((await r.json())?.choices?.[0]?.message?.content || "{}"); }
-    catch { continue; }
+    try {
+      parsed = JSON.parse((await r.json())?.choices?.[0]?.message?.content || "{}");
+    } catch {
+      continue;
+    }
     log("[OCR] parsed:", parsed);
 
     const cands = Array.isArray(parsed?.candidates) ? parsed.candidates : [];
@@ -156,8 +204,9 @@ async function fetchOFFProduct(barcode, log = console.log) {
   const kcal = pickKcal(nutr);
 
   const categoriesTags = Array.isArray(p.categories_tags) ? p.categories_tags : [];
-  const categoryTagRaw = categoriesTags.length ? categoriesTags[categoriesTags.length - 1] : null;
-  const categoryLabel  = categoryTagRaw
+  const categoryTagRaw =
+    categoriesTags.length ? categoriesTags[categoriesTags.length - 1] : null;
+  const categoryLabel = categoryTagRaw
     ? String(categoryTagRaw).replace(/^en:/, "")
     : toStr(p.categories, "unknown");
 
@@ -178,15 +227,19 @@ async function fetchOFFProduct(barcode, log = console.log) {
     fiber_g: firstNum(nutr.fiber_serving, nutr.fiber_100g),
     sodium_mg: Math.round(firstNum(nutr.sodium_serving, nutr.sodium_100g) * 1000),
 
-    // OFF ingredients (may be junk)
     ingredients_text: toStr(
-      p.ingredients_text_en || p.ingredients_text_de || p.ingredients_text_fr || p.ingredients_text,
+      p.ingredients_text_en ||
+        p.ingredients_text_de ||
+        p.ingredients_text_fr ||
+        p.ingredients_text,
       ""
     ),
     ingredients_list: Array.isArray(p.ingredients)
       ? p.ingredients.map((ing) => ({
           text: toStr(ing?.text || ing?.id, ""),
-          percent_estimate: Number.isFinite(+ing?.percent_estimate) ? +ing.percent_estimate : null,
+          percent_estimate: Number.isFinite(+ing?.percent_estimate)
+            ? +ing.percent_estimate
+            : null,
           percent: Number.isFinite(+ing?.percent) ? +ing.percent : null,
           percent_min: Number.isFinite(+ing?.percent_min) ? +ing.percent_min : null,
           percent_max: Number.isFinite(+ing?.percent_max) ? +ing.percent_max : null,
@@ -209,7 +262,10 @@ async function fetchOFFProduct(barcode, log = console.log) {
 }
 
 /* ---------- STEP 2b: Popular (well-known) alternatives ---------- */
-async function fetchOFFAlternatives({ barcode, category, categoryTag, countriesTags, baseKcal }, log = console.log) {
+async function fetchOFFAlternatives(
+  { barcode, category, categoryTag, countriesTags, baseKcal },
+  log = console.log
+) {
   const MIN_UNIQUE_SCANS = 50;
   const PAGE_SIZE = 100;
 
@@ -219,7 +275,8 @@ async function fetchOFFAlternatives({ barcode, category, categoryTag, countriesT
     json: "1",
     page_size: String(PAGE_SIZE),
     sort_by: "unique_scans_n",
-    fields: "product_name,brands,code,unique_scans_n,nutriments,countries_tags,categories_tags",
+    fields:
+      "product_name,brands,code,unique_scans_n,nutriments,countries_tags,categories_tags",
   });
 
   params.append("tagtype_0", "categories");
@@ -286,32 +343,45 @@ async function fetchOFFAlternatives({ barcode, category, categoryTag, countriesT
 
 /* ---------- NEW: STEP 2c LLM fallback alternatives (brand + title) ---------- */
 async function fetchLLMAlternatives({
-  brand, title, category, baseKcal, countriesTags, apiKey, log = console.log,
+  brand,
+  title,
+  category,
+  baseKcal,
+  countriesTags,
+  apiKey,
+  log = console.log,
 }) {
-  const display = [toStr(brand, ""), toStr(title, "")].filter(Boolean).join(" ").trim();
-  const market = Array.isArray(countriesTags) && countriesTags.length
-    ? countriesTags[0].replace(/^en:/, "")
-    : "";
+  const display = [toStr(brand, ""), toStr(title, "")]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+  const market =
+    Array.isArray(countriesTags) && countriesTags.length
+      ? countriesTags[0].replace(/^en:/, "")
+      : "";
 
   const body = {
     model: "gpt-4o-mini",
     temperature: 0.1,
     response_format: { type: "json_object" },
     messages: [
-      { role: "system", content:
-`You recommend close substitutes for a packaged food.
+      {
+        role: "system",
+        content: `You recommend close substitutes for a packaged food.
 Prefer SKUs from the SAME brand (e.g., different flavors/variants), then well-known competitors in the same category and market.
 Return concise product names like "Brand Product". Estimate calories_diff vs the given product when reasonable (negative means fewer kcal).
 If unsure, set calories_diff to null. Return up to 8.
 JSON ONLY:
-{ "alternatives":[{"name":"string","calories_diff":-40|null}, ...] }`
+{ "alternatives":[{"name":"string","calories_diff":-40|null}, ...] }`,
       },
-      { role: "user", content:
-`Product: ${display || "(unknown)"} 
+      {
+        role: "user",
+        content: `Product: ${display || "(unknown)"} 
 Category: ${toStr(category, "")}
 Market hint: ${market}
 Base calories: ${Number.isFinite(+baseKcal) ? +baseKcal : "unknown"}
-Return ONLY JSON.` },
+Return ONLY JSON.`,
+      },
     ],
   };
 
@@ -325,12 +395,16 @@ Return ONLY JSON.` },
     if (!r.ok) return [];
     const j = await r.json();
     let parsed = {};
-    try { parsed = JSON.parse(j?.choices?.[0]?.message?.content || "{}"); } catch {}
+    try {
+      parsed = JSON.parse(j?.choices?.[0]?.message?.content || "{}");
+    } catch {}
     const arr = Array.isArray(parsed?.alternatives) ? parsed.alternatives : [];
     const cleaned = arr
       .map((x) => ({
         name: toStr(x?.name, ""),
-        calories_diff: Number.isFinite(+x?.calories_diff) ? Math.round(+x.calories_diff) : null,
+        calories_diff: Number.isFinite(+x?.calories_diff)
+          ? Math.round(+x.calories_diff)
+          : null,
       }))
       .filter((x) => x.name);
     log("[LLM-ALTS] parsed:", cleaned);
@@ -343,35 +417,46 @@ Return ONLY JSON.` },
 
 /* ---------- STEP 3: Ask OpenAI for ingredients by Brand + Title (+photo) ---------- */
 async function fetchIngredientsByNameBrand({
-  brand, title, category, countriesTags, imageUrl, apiKey, log = console.log,
+  brand,
+  title,
+  category,
+  countriesTags,
+  imageUrl,
+  apiKey,
+  log = console.log,
 }) {
   const display = [toStr(brand, ""), toStr(title, "")]
-    .filter(Boolean).join(" ").trim();
-  const market = Array.isArray(countriesTags) && countriesTags.length
-    ? countriesTags[0].replace(/^en:/, "")
-    : "";
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+  const market =
+    Array.isArray(countriesTags) && countriesTags.length
+      ? countriesTags[0].replace(/^en:/, "")
+      : "";
 
   const body = {
     model: "gpt-4o-mini",
     temperature: 0.1,
     response_format: { type: "json_object" },
     messages: [
-      { role: "system", content:
-`You return a realistic ingredient list for a packaged food using brand + product name + category
+      {
+        role: "system",
+        content: `You return a realistic ingredient list for a packaged food using brand + product name + category
 and the package photo. Use visual cues to infer flavor drivers (e.g., chocolate/cocoa/hazelnut).
 Return 8–12 simple, lowercase ingredients ordered by typical proportion (largest first).
 Avoid nutrition lines and claims. JSON ONLY:
-{ "ingredients": ["string", ...] }`
+{ "ingredients": ["string", ...] }`,
       },
       {
         role: "user",
         content: [
-          { type: "text", text:
-`brand+name: ${display || "(unknown)"}
-category: ${toStr(category, "")}
-market hint: ${market}
-If the photo suggests chocolate/hazelnut layers, include "cocoa powder" or "chocolate" and "hazelnut paste".
-Return only JSON.` },
+          {
+            type: "text",
+            text: `brand+name: ${display || "(unknown)"}\ncategory: ${toStr(
+              category,
+              ""
+            )}\nmarket hint: ${market}\nIf the photo suggests chocolate/hazelnut layers, include "cocoa powder" or "chocolate" and "hazelnut paste".\nReturn only JSON.`,
+          },
           ...(imageUrl ? [{ type: "image_url", image_url: { url: imageUrl } }] : []),
         ],
       },
@@ -388,7 +473,9 @@ Return only JSON.` },
     if (!r.ok) return [];
     const j = await r.json();
     let parsed = {};
-    try { parsed = JSON.parse(j?.choices?.[0]?.message?.content || "{}"); } catch {}
+    try {
+      parsed = JSON.parse(j?.choices?.[0]?.message?.content || "{}");
+    } catch {}
     const arr = Array.isArray(parsed?.ingredients) ? parsed.ingredients : [];
     const cleaned = arr.map((t) => String(t).trim().toLowerCase()).filter(Boolean);
     log("[LLM-ING] parsed:", cleaned);
@@ -424,27 +511,217 @@ function buildIngredientsBreakdownFromList(ingredientsArray, total_kcal) {
   const sum = out.reduce((s, x) => s + x.calories_kcal, 0);
   const diff = total_kcal - sum;
   if (diff && out.length) out[0] = { ...out[0], calories_kcal: out[0].calories_kcal + diff };
-  return out.map((x) => ({ ...x, icon: safeIconName(x.icon) }));
+  return out; // icons already "Utensils"
 }
+
+/* ----------------------- HEALTH PROFILE + PROMS ---------------------------- */
+const fetchUserHealthProfile = async (uid, addLog) => {
+  try {
+    const db = getFirestore();
+    const snap = await getDoc(doc(db, "users", uid));
+    if (!snap.exists) return {};
+    const data = snap.data() || {};
+    const habitsContainer = data.habits && typeof data.habits === "object" ? data.habits : {};
+    const habits = {
+      reduceCoffee:
+        typeof data.reduceCoffee === "boolean"
+          ? data.reduceCoffee
+          : typeof habitsContainer.reduceCoffee === "boolean"
+          ? habitsContainer.reduceCoffee
+          : false,
+      stopSmoking:
+        typeof data.stopSmoking === "boolean"
+          ? data.stopSmoking
+          : typeof habitsContainer.stopSmoking === "boolean"
+          ? habitsContainer.stopSmoking
+          : false,
+    };
+    addLog?.("[HEALTH] loaded settings");
+    return {
+      kidneySettings: data.kidneySettings || {},
+      heartSettings: data.heartSettings || {},
+      diabetesSettings: data.diabetesSettings || {},
+      habits,
+    };
+  } catch (e) {
+    addLog?.(`[HEALTH] load failed: ${e?.message || e}`);
+    return {};
+  }
+};
+
+const pct = (v, limit) =>
+  Number.isFinite(v) && Number.isFinite(limit) && limit > 0
+    ? Math.round((v / limit) * 100)
+    : null;
+
+const satFatCapFor = (level = "moderate") => {
+  const m = String(level || "moderate").toLowerCase();
+  if (m.startsWith("low")) return 10; // g/day
+  if (m.startsWith("high")) return 20;
+  return 13; // default
+};
+
+const looksCaffeinated = ({ title, ingredients_text, items }) => {
+  const hay = [
+    String(title || ""),
+    String(ingredients_text || ""),
+    ...(Array.isArray(items) ? items.map((i) => `${i?.name || ""} ${i?.subtitle || ""}`) : []),
+  ]
+    .join(" ")
+    .toLowerCase();
+  return /(coffee|espresso|latte|cappuccino|americano|mocha|cold\s*brew|energy\s*drink|caffeine|mate|yerba|guarana|cola|tea|matcha)/i.test(
+    hay
+  );
+};
+const buildHealthPrompts = ({ macros, profile, product }) => {
+  const lines = [];
+  const parts = {};
+
+  // Kidney
+  if (profile?.kidneySettings) {
+    const k = profile.kidneySettings;
+    const sodiumLimit = Number.isFinite(+k.sodiumLimitMg) ? +k.sodiumLimitMg : 2000;
+    const sodiumP = pct(macros.sodium_mg, sodiumLimit);
+    let kidney = `Kidney: `;
+    if (Number.isFinite(macros.sodium_mg)) {
+      kidney += `${macros.sodium_mg} mg sodium`;
+      if (sodiumP != null) kidney += ` (${sodiumP}% of your ${sodiumLimit} mg/day).`;
+      if (sodiumP != null && sodiumP >= 40)
+        kidney += ` Consider low-sodium options or less seasoning.`;
+    } else {
+      kidney += `sodium not visible on label.`;
+    }
+    if (k.proteinLevel && macros.protein_g != null) {
+      const pl = String(k.proteinLevel).toLowerCase();
+      if (pl.startsWith("low") && macros.protein_g > 25)
+        kidney += ` Protein ${macros.protein_g} g may be high for your low-protein target.`;
+    }
+    parts.kidney = kidney;      // ⟵ no emoji
+    lines.push(kidney);         // ⟵ no emoji
+  }
+
+  // Heart
+  if (profile?.heartSettings) {
+    const h = profile.heartSettings;
+    const cap = satFatCapFor(h.satFatLimit);
+    let heart = `Heart: `;
+    if (macros.fat_g != null) {
+      heart += `fat ${macros.fat_g} g`;
+      if (macros.fat_g >= 17) heart += ` — on the higher side; keep other meals lighter today.`;
+      else heart += ` — reasonable for most plans.`;
+      heart += ` Aim saturated fat ≈${cap} g/day (${h.satFatLimit || "moderate"}).`;
+    } else {
+      heart += `fat not visible on label.`;
+    }
+    parts.heart = heart;        // ⟵ no emoji
+    lines.push(heart);          // ⟵ no emoji
+  }
+
+  // Diabetes
+  if (profile?.diabetesSettings) {
+    let diabetes = `Diabetes: `;
+    const flags = [];
+    if (macros.carbs_g != null && macros.carbs_g >= 45) flags.push(`carbs ${macros.carbs_g} g`);
+    if (macros.sugar_g != null && macros.sugar_g >= 15) flags.push(`sugars ${macros.sugar_g} g`);
+    if (macros.fiber_g != null && macros.fiber_g < 4)   flags.push(`low fiber (${macros.fiber_g} g)`);
+    diabetes += flags.length
+      ? flags.join(", ") + ` — pair with lean protein/veg or halve the portion.`
+      : `no major flags detected for this serving.`;
+    parts.diabetes = diabetes;  // ⟵ no emoji
+    lines.push(diabetes);       // ⟵ no emoji
+  }
+
+  // Habits
+  const caffeinated = looksCaffeinated(product || {});
+  if (profile?.habits?.reduceCoffee) {
+    let coffee = `Coffee: you're cutting back. `;
+    coffee += caffeinated
+      ? `This looks caffeinated — try decaf or a smaller size today.`
+      : `Nice — this seems caffeine-free.`;
+    parts.reduceCoffee = coffee; // ⟵ no emoji
+    lines.push(coffee);
+  }
+  if (profile?.habits?.stopSmoking) {
+    let smoke = `Stop smoking: keep momentum. `;
+    smoke += caffeinated
+      ? `Coffee can be a trigger; swap with water or take a short walk after.`
+      : `Use meals as a cue to breathe deeply instead of lighting up.`;
+    parts.stopSmoking = smoke;   // ⟵ no emoji
+    lines.push(smoke);
+  }
+
+  const text =
+    lines.length
+      ? `Personalized flags\n• ${lines.join("\n• ")}`
+      : "Personalized flags: none detected for your current settings.";
+
+  return {
+    text,
+    parts,
+    numbers: {
+      sodium_mg: macros.sodium_mg ?? null,
+      carbs_g: macros.carbs_g ?? null,
+      fat_g: macros.fat_g ?? null,
+      fiber_g: macros.fiber_g ?? null,
+      sugar_g: macros.sugar_g ?? null,
+      protein_g: macros.protein_g ?? null,
+    },
+    profile_used: {
+      kidneySettings: profile?.kidneySettings || null,
+      heartSettings: profile?.heartSettings || null,
+      diabetesSettings: profile?.diabetesSettings || null,
+      habits: profile?.habits || null,
+    },
+  };
+};
+
+/* ---------------- /HEALTH PROFILE + PROMS ---------------- */
 
 /* ---------------- component ---------------- */
 export default forwardRef(function Scan_Barcode_Camera(
   { inCarousel = false, isActive = false, onScanResult, onScanList, openAiApiKey },
   ref
 ) {
-  const userId = getAuth().currentUser?.uid;
+  const userId = getAuth().currentUser?.uid || "anon";
   const { register, present, isS2Open, isS3Open } = useSheets();
+  const { setCurrentItemId, setCurrentItem } = useCurrentScannedItemId();
+
+  const shouldShowCamera = isS2Open && isActive && !isS3Open;
 
   const OPENAI_API_KEY_FALLBACK =
     "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";
   const EFFECTIVE_OPENAI_KEY = openAiApiKey || OPENAI_API_KEY_FALLBACK;
 
   const {
-    setImageUrl, setCloudUrl, setResult, setRaw, addLog, resetScan,
-    setTitle, setCalories, setProtein, setFat, setSugar, setCarbs,
-    setFiber, setSodium, setHealthScore, setAlternatives, setList,
-    markScannedNow, formatScannedAt, setIngredientsBreakdown,
+    setImageUrl,
+    setCloudUrl,
+    setResult,
+    setRaw,
+    addLog,
+    resetScan,
+    setTitle,
+    setCalories,
+    setProtein,
+    setFat,
+    setSugar,
+    setCarbs,
+    setFiber,
+    setSodium,
+    setHealthScore,
+    setAlternatives,
+    setList,
+    markScannedNow,
+    formatScannedAt,
+    setIngredientsBreakdown,
+    setProms, // 👈 add proms to UI
   } = useScanResults();
+
+  function localDateId(d = new Date()) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  }
 
   // register page
   const didRegister = useRef(false);
@@ -458,6 +735,33 @@ export default forwardRef(function Scan_Barcode_Camera(
   const [permission, requestPermission] = useCameraPermissions();
   const [loading, setLoading] = useState(false);
   const log = mkLogger(addLog);
+
+  /* ---------- Scanner frame animation (for optional scan line) ---------- */
+  const frameSize = useMemo(() => Math.min(width(70), height(38)), []);
+  const scanAnim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (shouldShowCamera && !loading) {
+      scanAnim.setValue(0);
+      const loop = Animated.loop(
+        Animated.sequence([
+          Animated.timing(scanAnim, {
+            toValue: 1,
+            duration: 1800,
+            easing: Easing.inOut(Easing.quad),
+            useNativeDriver: true,
+          }),
+          Animated.timing(scanAnim, {
+            toValue: 0,
+            duration: 1800,
+            easing: Easing.inOut(Easing.quad),
+            useNativeDriver: true,
+          }),
+        ])
+      );
+      loop.start();
+      return () => loop.stop();
+    }
+  }, [shouldShowCamera, loading, scanAnim]);
 
   useImperativeHandle(ref, () => ({
     scan: async () => {
@@ -483,7 +787,8 @@ export default forwardRef(function Scan_Barcode_Camera(
         await new Promise((r) => setTimeout(r, 900));
 
         const pic = await cameraRef.current.takePictureAsync({
-          quality: 0.9, skipProcessing: true,
+          quality: 0.9,
+          skipProcessing: true,
         });
         if (!pic?.uri) {
           log("[ERR] No photo captured");
@@ -500,15 +805,21 @@ export default forwardRef(function Scan_Barcode_Camera(
         // Upload
         log("[BC] uploading to Firebase…");
         const downloadUrl = await uploadImageToStorage({
-          fileUri: pic.uri, uid: userId || "anon",
+          fileUri: pic.uri,
+          uid: userId,
         });
         setCloudUrl(downloadUrl);
         log("[BC] upload done:", downloadUrl);
 
+        // 🔹 Load health profile + habits (once per scan)
+        const profile = await fetchUserHealthProfile(userId, addLog);
+
         // OCR digits with OpenAI (robust)
         log("[BC] OCR (OpenAI) …");
         const ean13 = await readDigitsFromImage({
-          imageUrl: downloadUrl, apiKey: EFFECTIVE_OPENAI_KEY, log,
+          imageUrl: downloadUrl,
+          apiKey: EFFECTIVE_OPENAI_KEY,
+          log,
         });
         log("[BC] OCR result (ean13):", ean13);
 
@@ -536,7 +847,11 @@ export default forwardRef(function Scan_Barcode_Camera(
             countries_tags: [],
           };
           await pushFinalPayload({
-            analyzed: unknown, pic, downloadUrl, userId,
+            analyzed: unknown,
+            pic,
+            downloadUrl,
+            userId,
+            profile, // pass through
           });
           return;
         }
@@ -569,13 +884,16 @@ export default forwardRef(function Scan_Barcode_Camera(
           };
         } else {
           // well-known alternatives (popularity + category/country awareness)
-          off.alternatives = await fetchOFFAlternatives({
-            barcode: off.barcode,
-            category: off.category,
-            categoryTag: off.category_tag,
-            countriesTags: off.countries_tags,
-            baseKcal: off.calories_kcal_total,
-          }, log);
+          off.alternatives = await fetchOFFAlternatives(
+            {
+              barcode: off.barcode,
+              category: off.category,
+              categoryTag: off.category_tag,
+              countriesTags: off.countries_tags,
+              baseKcal: off.calories_kcal_total,
+            },
+            log
+          );
 
           // 🔁 Fallback to LLM if OFF gives too few
           if (!off.alternatives || off.alternatives.length < 3) {
@@ -585,25 +903,33 @@ export default forwardRef(function Scan_Barcode_Camera(
               category: off.category,
               baseKcal: off.calories_kcal_total,
               countriesTags: off.countries_tags,
-              apiKey: (typeof openAiApiKey === "string" && openAiApiKey) || EFFECTIVE_OPENAI_KEY,
+              apiKey:
+                (typeof openAiApiKey === "string" && openAiApiKey) ||
+                EFFECTIVE_OPENAI_KEY,
               log,
             });
 
             // merge + dedupe by name
             const merged = [...(off.alternatives || []), ...llmAlts];
             const seen = new Set();
-            off.alternatives = merged.filter((a) => {
-              const key = String(a?.name || "").toLowerCase().trim();
-              if (!key || seen.has(key)) return false;
-              seen.add(key);
-              return true;
-            }).slice(0, 8);
+            off.alternatives = merged
+              .filter((a) => {
+                const key = String(a?.name || "").toLowerCase().trim();
+                if (!key || seen.has(key)) return false;
+                seen.add(key);
+                return true;
+              })
+              .slice(0, 8);
             log("[ALTS] merged:", off.alternatives);
           }
         }
 
         await pushFinalPayload({
-          analyzed: off, pic, downloadUrl, userId,
+          analyzed: off,
+          pic,
+          downloadUrl,
+          userId,
+          profile, // pass through
         });
       } catch (e) {
         log("[ERR] flow:", e?.message || String(e));
@@ -615,7 +941,7 @@ export default forwardRef(function Scan_Barcode_Camera(
     },
   }));
 
-  const pushFinalPayload = async ({ analyzed, pic, downloadUrl, userId }) => {
+  const pushFinalPayload = async ({ analyzed, pic, downloadUrl, userId, profile }) => {
     const clean = (v) => (v === "string" ? "" : v);
     analyzed.title = clean(toStr(analyzed.title, ""));
     analyzed.brand = clean(toStr(analyzed.brand, ""));
@@ -627,14 +953,14 @@ export default forwardRef(function Scan_Barcode_Camera(
     setRaw(JSON.stringify(analyzed));
 
     const titleSafe = toStr(analyzed?.title, "Scanned product");
-    const kcalSafe  = toNum(analyzed?.calories_kcal_total, null);
-    const protein   = toNum(analyzed?.protein_g, 0);
-    const fat       = toNum(analyzed?.fat_g, 0);
-    const sugar     = toNum(analyzed?.sugar_g, 0);
-    const carbs     = toNum(analyzed?.carbs_g, 0);
-    const fiber     = toNum(analyzed?.fiber_g, 0);
-    const sodium    = toNum(analyzed?.sodium_mg, 0);
-    let   health    = toNum(analyzed?.health_score, 0);
+    const kcalSafe = toNum(analyzed?.calories_kcal_total, null);
+    const protein = toNum(analyzed?.protein_g, 0);
+    const fat = toNum(analyzed?.fat_g, 0);
+    const sugar = toNum(analyzed?.sugar_g, 0);
+    const carbs = toNum(analyzed?.carbs_g, 0);
+    const fiber = toNum(analyzed?.fiber_g, 0);
+    const sodium = toNum(analyzed?.sodium_mg, 0);
+    let health = toNum(analyzed?.health_score, 0);
     if (health < 0) health = 0;
     if (health > 10) health = 10;
 
@@ -649,16 +975,21 @@ export default forwardRef(function Scan_Barcode_Camera(
     setHealthScore(health);
 
     /* === INGREDIENTS via OFF OR LLM (Brand+Title + Photo) === */
-    const looksBad = (t) => (String(t || "").replace(/[^A-Za-zÄäÖöÜüßÀ-ÿ]/g, "").length < 3);
-    let ingList = Array.isArray(analyzed?.ingredients_list) ? analyzed.ingredients_list : [];
-    if (ingList.length < 2 || ingList.every(i => looksBad(i?.text))) {
+    const looksBad = (t) =>
+      String(t || "").replace(/[^A-Za-zÄäÖöÜüßÀ-ÿ]/g, "").length < 3;
+    let ingList = Array.isArray(analyzed?.ingredients_list)
+      ? analyzed.ingredients_list
+      : [];
+    if (ingList.length < 2 || ingList.every((i) => looksBad(i?.text))) {
       const llmIngredients = await fetchIngredientsByNameBrand({
         brand: analyzed?.brand,
         title: analyzed?.title,
         category: analyzed?.category,
         countriesTags: analyzed?.countries_tags,
-        imageUrl: downloadUrl, // let LLM see the package (helps detect chocolate/hazelnut etc.)
-        apiKey: (typeof (openAiApiKey || "") === "string" ? openAiApiKey : "") || (typeof EFFECTIVE_OPENAI_KEY === "string" ? EFFECTIVE_OPENAI_KEY : ""),
+        imageUrl: downloadUrl, // let LLM see the package
+        apiKey:
+          (typeof (openAiApiKey || "") === "string" ? openAiApiKey : "") ||
+          (typeof EFFECTIVE_OPENAI_KEY === "string" ? EFFECTIVE_OPENAI_KEY : ""),
         log: mkLogger(addLog),
       });
       if (llmIngredients.length) {
@@ -669,17 +1000,28 @@ export default forwardRef(function Scan_Barcode_Camera(
     }
 
     // Build & save breakdown (evenly across top 6; scaled to total kcal)
-    const arr = (ingList || []).map((i) => toStr(i?.text, "")).filter(Boolean);
-    const ingredientsBreakdown = buildIngredientsBreakdownFromList(arr, Number.isFinite(kcalSafe) ? kcalSafe : null);
+    const arr = ( ingList || [] ).map((i) => toStr(i?.text, "")).filter(Boolean);
+    const ingredientsBreakdown = buildIngredientsBreakdownFromList(
+      arr,
+      Number.isFinite(kcalSafe) ? kcalSafe : null
+    );
     setIngredientsBreakdown?.(ingredientsBreakdown);
 
-    // Items list
+    // Firestore-friendly ingredients
+    const ingredients_full = Array.isArray(ingredientsBreakdown)
+      ? ingredientsBreakdown.map((x) => ({
+          name: toStr(x?.name, ""),
+          estimated_kcal: toNum(x?.calories_kcal, 0),
+        }))
+      : [];
+
+    // ---------- Items list (keep for compatibility) ----------
     const items = Array.isArray(analyzed?.items) ? analyzed.items : [];
     const itemsSafe = items.map((it) => ({
       name: toStr(it?.name, "Item"),
       subtitle: toStr(it?.subtitle, ""),
       calories_kcal: toNum(it?.calories_kcal, 0),
-      icon: safeIconName(it?.icon),
+      icon: it?.icon && String(it.icon).trim().length ? String(it.icon).trim() : "Utensils",
     }));
     if (!itemsSafe.length) {
       itemsSafe.push({
@@ -689,36 +1031,193 @@ export default forwardRef(function Scan_Barcode_Camera(
         icon: "Utensils",
       });
     }
-    setList?.(itemsSafe);
 
-    const alts = Array.isArray(analyzed?.alternatives) ? analyzed.alternatives : [];
-    setAlternatives?.(alts);
+    // Build health proms from profile + macros
+    const proms = buildHealthPrompts({
+      macros: {
+        sodium_mg: sodium,
+        carbs_g: carbs,
+        fat_g: fat,
+        fiber_g: fiber,
+        sugar_g: sugar,
+        protein_g: protein,
+      },
+      profile,
+      product: { title: titleSafe, ingredients_text: analyzed?.ingredients_text || "", items: itemsSafe },
+    });
+    setProms?.(proms);
 
-    // Firestore save (non-blocking)
-    try {
-      const db = getFirestore();
-      const colRef = collection(db, "users", userId || "anon", "RecentlyEaten");
-      await addDoc(colRef, {
-        barcode: toStr(analyzed?.barcode, ""),
-        title: titleSafe,
-        calories_kcal_total: Number.isFinite(kcalSafe) ? kcalSafe : null,
-        protein_g: protein, fat_g: fat, sugar_g: sugar, carbs_g: carbs,
-        fiber_g: fiber, sodium_mg: sodium, health_score: health,
-        items: itemsSafe, alternatives: alts,
-        image_local_uri: pic?.uri || null, image_cloud_url: downloadUrl || null,
-        scanned_at_pretty: formatScannedAt?.() || null, created_at: serverTimestamp(),
-        raw: JSON.stringify(analyzed), result: analyzed,
-      });
-      console.log("[BC] saved to Firestore");
-      addLog?.("[BC] saved to Firestore");
-    } catch (err) {
-      console.log("[ERR] Firestore save:", err?.message || err);
-      addLog?.(`[ERR] Firestore save: ${err?.message || err}`);
+    // ---------- RECONCILE INGREDIENTS (as constructed above) ----------
+    const baseBrand = toStr(analyzed?.brand, "");
+    const reconciledIngredients = ingredients_full.length
+      ? ingredients_full
+      : Array.isArray(ingredientsBreakdown)
+        ? ingredientsBreakdown.map((x) => ({
+            name: toStr(x?.name, ""),
+            estimated_kcal: toNum(x?.calories_kcal, 0),
+          }))
+        : [];
+
+    const perIngredientList = reconciledIngredients.map((ing) => ({
+      name: toStr(ing?.name, ""),
+      estimated_kcal: toNum(ing?.estimated_kcal, 0),
+    }));
+    const perIngredientKcalMap = Object.fromEntries(
+      perIngredientList.map((i) => [i.name, i.estimated_kcal])
+    );
+
+    // 👉 Fill the UI list with ALL ingredients (card renderer unchanged)
+    const ingredientCards = reconciledIngredients.map((ing) => ({
+      label: ing.name,
+      amt: Number.isFinite(ing.estimated_kcal) ? `+${Math.round(ing.estimated_kcal)} cal` : "+0 cal",
+      icon: "Utensils",
+      IconCOlor: "#1E67FF",
+      iconColorBg: "#EEF3FF",
+      color: "#FFFFFF",
+    }));
+    setList?.(ingredientCards);
+    onScanList?.(ingredientCards);
+
+    // ✅ Alternatives — group by same brand vs other brands (no images)
+    const rawAlts = Array.isArray(analyzed?.alternatives) ? analyzed.alternatives : [];
+    const sameBrand = [];
+    const otherBrands = [];
+
+    for (const a of rawAlts) {
+      const display = toStr(a?.name, "");
+      const { brand: detectedBrand, rest } = splitBrandFromDisplay(display, baseBrand);
+      const variant = toStr(a?.flavor_or_variant || "", "");
+      const diff = Number.isFinite(+a?.calories_diff) ? +a.calories_diff : NaN;
+      const kcal = Number.isFinite(kcalSafe) && Number.isFinite(diff) ? Math.round(kcalSafe + diff) : NaN;
+      const bucket = normalizeBucket(a?.bucket) ?? deriveBucket(kcal, kcalSafe);
+
+      const normalized = {
+        brand: detectedBrand,
+        name: rest || display,
+        flavor_or_variant: variant || null,
+        calories_per_package_kcal: Number.isFinite(kcal) ? Math.round(kcal) : null,
+        bucket,
+      };
+
+      if (baseBrand && norm(detectedBrand) === norm(baseBrand)) {
+        sameBrand.push(normalized);
+      } else {
+        otherBrands.push(normalized);
+      }
     }
 
-    console.log("[SCANNED PRODUCT]", analyzed?.barcode, analyzed?.brand, analyzed?.title);
-    addLog?.(`[SCANNED PRODUCT] ${analyzed?.barcode} ${analyzed?.brand} ${analyzed?.title}`);
+    const ALL_ALTS = [...sameBrand, ...otherBrands];
 
+    // Build a mixed UI list: 5 lower + 2 similar + 5 higher
+    const lessAlts = ALL_ALTS.filter((a) => a.bucket === "lower").slice(0, 5);
+    const simAlts  = ALL_ALTS.filter((a) => a.bucket === "similar").slice(0, 2);
+    const moreAlts = ALL_ALTS.filter((a) => a.bucket === "higher").slice(0, 5);
+
+    const toCard = (p) => ({
+      label: [p.brand, p.name, p.flavor_or_variant].filter(Boolean).join(" "),
+      amt: Number.isFinite(p.calories_per_package_kcal)
+        ? `${p.calories_per_package_kcal}cal`
+        : "—",
+      moreOrLess: p.bucket === "lower" ? "less" : p.bucket === "higher" ? "more" : "similar",
+    });
+
+    const flatCards = [...lessAlts, ...simAlts, ...moreAlts].map(toCard);
+    setAlternatives?.(flatCards);
+
+    // quick counts saved in Firestore
+    const alternatives_summary = {
+      lower: lessAlts.length,
+      similar: simAlts.length,
+      higher: moreAlts.length,
+      total: ALL_ALTS.length,
+    };
+
+    // Common payload
+    const basePayload = {
+      barcode: toStr(analyzed?.barcode, ""),
+      title: titleSafe,
+      brand: baseBrand || null,
+
+      calories_kcal_total: Number.isFinite(kcalSafe) ? kcalSafe : null,
+      protein_g: protein,
+      fat_g: fat,
+      sugar_g: sugar,
+      carbs_g: carbs,
+      fiber_g: fiber,
+      sodium_mg: sodium,
+      health_score: health,
+
+      // arrays (use reconciled ingredients)
+      items: itemsSafe,
+      ingredients_full: reconciledIngredients,
+      // also handy: flattened per-ingredient kcal list + map
+      ingredients_kcal_list: perIngredientList,
+      ingredients_kcal_map: perIngredientKcalMap,
+
+      alternatives: {
+        base_brand: baseBrand || null,
+        same_brand: sameBrand,
+        other_brands: otherBrands,
+        summary_by_bucket: alternatives_summary,
+      },
+      alternatives_flat: flatCards,
+
+      // 👇 personalized health prompts + profile used
+      proms,
+      profile_used: proms?.profile_used || null,
+
+      // media + time
+      image_local_uri: pic?.uri || null,
+      image_cloud_url: downloadUrl || null,
+      scanned_at_pretty: formatScannedAt?.() || null,
+      created_at: serverTimestamp(),
+
+      // raw/model
+      raw: JSON.stringify(analyzed),
+      result: analyzed,
+    };
+
+    // 🔹 Save to RecentlyEaten and set current item id
+    try {
+      const db = getFirestore();
+      const reCol = collection(db, "users", userId, "RecentlyEaten");
+      const docRef = await addDoc(reCol, basePayload);
+      addLog?.("[BC] saved to Firestore (RecentlyEaten)");
+      // update current item context
+      setCurrentItemId?.(docRef.id);
+      setCurrentItem?.({ id: docRef.id, ...basePayload });
+    } catch (err) {
+      addLog?.(`[ERR] Firestore save RecentlyEaten: ${err?.message || err}`);
+    }
+
+    // 🔹 Save to Today/<dateId>/List
+    try {
+      const db = getFirestore();
+      const dateId = localDateId();
+      const todayCol = collection(db, "users", userId, "Today", dateId, "List");
+      await addDoc(todayCol, basePayload);
+      addLog?.(`Saved scan to Firestore at Today/${dateId}`);
+    } catch (err) {
+      addLog?.(`[ERR] Firestore save Today: ${err?.message || err}`);
+      Alert.alert("Firestore save failed", err?.message || String(err));
+    }
+
+    // 🔹 Save to AllTimeLineScan
+    try {
+      const db = getFirestore();
+      const atlCol = collection(db, "users", userId, "AllTimeLineScan");
+      await addDoc(atlCol, basePayload);
+      addLog?.("Saved scan to Firestore (AllTimeLineScan)");
+    } catch (err) {
+      addLog?.(
+        `[ERR] Firestore save AllTimeLineScan: ${err?.message || err}`
+      );
+      Alert.alert("Firestore save failed", err?.message || String(err));
+    }
+
+    addLog?.(
+      `[SCANNED PRODUCT] ${analyzed?.barcode} ${analyzed?.brand} ${analyzed?.title}`
+    );
     onScanResult?.(analyzed);
   };
 
@@ -736,21 +1235,201 @@ export default forwardRef(function Scan_Barcode_Camera(
     );
   }
 
+  /* ---------- overlay geometry ---------- */
+  const frameLeft = (width(100) - frameSize) / 2;
+  const frameTop = height(32); // push down a bit from the notch
+  const scanTranslateY = scanAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, frameSize - 4],
+  });
+
   return (
     <View style={{ height: "100%", width: "100%" }}>
       <View style={{ height: height(100), width: width(100), backgroundColor: "#000" }}>
-        {isS2Open && isActive && !isS3Open ? (
-          <View style={{ height: "100%", width: "100%" }}>
+        {shouldShowCamera ? (
+          <View
+            style={{ height: "100%", width: "100%" }}
+            pointerEvents={inCarousel ? "none" : "auto"}
+          >
             <CameraView
               ref={cameraRef}
               style={{ height: "100%", width: "100%" }}
               facing="back"
               flash="off"
               autofocus="on"
-              onCameraReady={() => mkLogger(addLog)("Camera ready")}
+              onCameraReady={() => addLog("Camera ready")}
             />
           </View>
         ) : null}
+
+        {/* Scanner overlay like the FIRST image */}
+        {shouldShowCamera && (
+          <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+            {/* Dim around the frame */}
+            <View
+              style={{
+                position: "absolute",
+                left: 0,
+                right: 0,
+                top: 0,
+                height: frameTop,
+                backgroundColor: "rgba(0,0,0,0.45)",
+              }}
+            />
+            <View
+              style={{
+                position: "absolute",
+                left: 0,
+                right: 0,
+                top: frameTop + frameSize,
+                bottom: 0,
+                backgroundColor: "rgba(0,0,0,0.45)",
+              }}
+            />
+            <View
+              style={{
+                position: "absolute",
+                left: 0,
+                top: frameTop,
+                width: frameLeft,
+                height: frameSize,
+                backgroundColor: "rgba(0,0,0,0.45)",
+              }}
+            />
+            <View
+              style={{
+                position: "absolute",
+                right: 0,
+                top: frameTop,
+                width: frameLeft,
+                height: frameSize,
+                backgroundColor: "rgba(0,0,0,0.45)",
+              }}
+            />
+
+            {/* Frame container */}
+            <View
+              style={{
+                position: "absolute",
+                left: frameLeft,
+                top: frameTop,
+                width: frameSize,
+                height: frameSize,
+                borderRadius: 14,
+                borderColor: "rgba(255,255,255,0.2)",
+                borderWidth: 1,
+              }}
+            />
+
+            {/* Corners */}
+            {/* top-left */}
+            <View
+              style={{
+                position: "absolute",
+                left: frameLeft - 2,
+                top: frameTop - 2,
+                width: 40,
+                height: 6,
+                backgroundColor: "#fff",
+                borderTopLeftRadius: 4,
+              }}
+            />
+            <View
+              style={{
+                position: "absolute",
+                left: frameLeft - 2,
+                top: frameTop - 2,
+                width: 6,
+                height: 40,
+                backgroundColor: "#fff",
+                borderTopLeftRadius: 4,
+              }}
+            />
+            {/* top-right */}
+            <View
+              style={{
+                position: "absolute",
+                left: frameLeft + frameSize - 38,
+                top: frameTop - 2,
+                width: 40,
+                height: 6,
+                backgroundColor: "#fff",
+                borderTopRightRadius: 4,
+              }}
+            />
+            <View
+              style={{
+                position: "absolute",
+                left: frameLeft + frameSize - 4,
+                top: frameTop - 2,
+                width: 6,
+                height: 40,
+                backgroundColor: "#fff",
+                borderTopRightRadius: 4,
+              }}
+            />
+            {/* bottom-left */}
+            <View
+              style={{
+                position: "absolute",
+                left: frameLeft - 2,
+                top: frameTop + frameSize - 4,
+                width: 40,
+                height: 6,
+                backgroundColor: "#fff",
+                borderBottomLeftRadius: 4,
+              }}
+            />
+            <View
+              style={{
+                position: "absolute",
+                left: frameLeft - 2,
+                top: frameTop + frameSize - 38,
+                width: 6,
+                height: 40,
+                backgroundColor: "#fff",
+                borderBottomLeftRadius: 4,
+              }}
+            />
+            {/* bottom-right */}
+            <View
+              style={{
+                position: "absolute",
+                left: frameLeft + frameSize - 38,
+                top: frameTop + frameSize - 4,
+                width: 40,
+                height: 6,
+                backgroundColor: "#fff",
+                borderBottomRightRadius: 4,
+              }}
+            />
+            <View
+              style={{
+                position: "absolute",
+                left: frameLeft + frameSize - 4,
+                top: frameTop + frameSize - 38,
+                width: 6,
+                height: 40,
+                backgroundColor: "#fff",
+                borderBottomRightRadius: 4,
+              }}
+            />
+
+            {/* Animated scan line (kept off to match your latest) */}
+            {/* <Animated.View
+              style={{
+                position: "absolute",
+                left: frameLeft + 10,
+                width: frameSize - 20,
+                top: frameTop,
+                height: 4,
+                borderRadius: 2,
+                backgroundColor: "#FF3B30",
+                transform: [{ translateY: scanTranslateY }],
+              }}
+            /> */}
+          </View>
+        )}
 
         {loading && (
           <View style={styles.loadingOverlay} pointerEvents="none">
@@ -777,7 +1456,10 @@ const styles = StyleSheet.create({
   primaryText: { color: "#fff", fontWeight: "800" },
   loadingOverlay: {
     position: "absolute",
-    top: 0, left: 0, right: 0, bottom: 0,
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "rgba(0,0,0,0.35)",

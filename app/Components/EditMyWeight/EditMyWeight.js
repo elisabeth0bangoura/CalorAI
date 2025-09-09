@@ -1,149 +1,198 @@
-// ProgressComponent.js (EditMyWeight)
-import * as Haptics from 'expo-haptics'; // ← add
+// EditMyWeight.js
+import * as Haptics from 'expo-haptics';
 import React, { useEffect, useRef, useState } from 'react';
-import { Switch, Text, View } from 'react-native';
+import { Alert, Switch, Text, TouchableOpacity, View } from 'react-native';
 import { height, size, width } from 'react-native-responsive-sizes';
 import { RulerPicker } from 'react-native-ruler-picker';
 
+import { getAuth } from '@react-native-firebase/auth';
+import {
+  addDoc,
+  collection,
+  doc,
+  getFirestore,
+  serverTimestamp,
+  setDoc,
+} from '@react-native-firebase/firestore';
 
+const KG_MIN = 30;
+const KG_MAX = 200;
+const LB_PER_KG = 2.20462262;
+const kgToLb = (kg) => kg * LB_PER_KG;
+const lbToKg = (lb) => lb / LB_PER_KG;
+const round1 = (x) => Math.round(x * 10) / 10;
 
+export default function EditMyWeight({ initial = 65, onSaved }) {
+  const uid = getAuth().currentUser?.uid;
 
-
-export default function EditMyWeight({ initial = 65, onChange }) {
-
-
-
+  // layout + ruler ref
   const [w, setW] = useState(0);
-  const [value, setValue] = useState(initial);
   const ref = useRef(null);
 
-    const [isEnabled, setIsEnabled] = useState(false);
-  const toggleSwitch = () => setIsEnabled(previousState => !previousState);
+  // unit toggle (true = kg, false = lb)
+  const [isMetric, setIsMetric] = useState(true);
 
+  // value shown on the ruler in CURRENT UNIT (kg or lb)
+  const [displayVal, setDisplayVal] = useState(Math.round(initial));
 
+  // haptics helpers
+  const lastTickRef = useRef(Math.round(initial));
+  const lastRAF = useRef(0);
 
-  // for haptics: remember last whole tick we vibrated on
-  const lastTickRef = useRef(Math.round(initial)); // ← add
+  // button state
+  const [saving, setSaving] = useState(false);
 
-  // align to initial once width is known
+  // align ruler to initial when width known
   useEffect(() => {
-    if (w && ref.current?.scrollToValue) ref.current.scrollToValue(initial, false);
-  }, [w, initial]);
+    if (!w || !ref.current?.scrollToValue) return;
+    const startVal = isMetric ? Math.round(initial) : Math.round(kgToLb(initial));
+    setDisplayVal(startVal);
+    ref.current.scrollToValue(startVal, false);
+  }, [w]); // only when width measured
 
-  // throttle label updates (≈30–60fps) + haptics
-  const last = useRef(0);
+  // toggle units (convert + scroll; DOES NOT SAVE)
+  const onToggleUnit = (next) => {
+    setIsMetric(next);
+    const target = next ? Math.round(lbToKg(displayVal)) : Math.round(kgToLb(displayVal));
+    setDisplayVal(target);
+    if (ref.current?.scrollToValue) ref.current.scrollToValue(target, true);
+    Haptics.selectionAsync();
+  };
+
+  // handle ruler movement (NO SAVE here)
   const handleChange = (v) => {
     const now = Date.now();
-    if (now - last.current > 33) { // ~30fps
-      last.current = now;
+    if (now - lastRAF.current > 33) {
+      lastRAF.current = now;
       const n = Math.round(Number(v));
-
-      // 🔊 haptics: tick per step, stronger on long ticks (every 5)
       if (n !== lastTickRef.current) {
-        if (n % 5 === 0) {
-          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-        } else {
-          Haptics.selectionAsync();
-        }
+        if (n % 5 === 0) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        else Haptics.selectionAsync();
         lastTickRef.current = n;
       }
-
-      setValue(n);
+      setDisplayVal(n);
     }
   };
 
-  const display = String(value); // e.g. "81"
+  // SAVE ONLY WHEN BUTTON PRESSED
+  const onPressSave = async () => {
+    if (saving) return;
+    try {
+      if (!uid) throw new Error('Not signed in');
+      setSaving(true);
+
+      const db = getFirestore();
+      const kg = isMetric ? displayVal : lbToKg(displayVal);
+      const lb = kgToLb(kg);
+
+      // 1) append a log entry
+      await addDoc(collection(db, 'users', uid, 'weightprogrss'), {
+        createdAt: serverTimestamp(),
+        kg: round1(kg),
+        lb: round1(lb),
+        unit: isMetric ? 'kg' : 'lb',
+        source: 'manual',
+      });
+
+      // 2) update current weight on user root doc
+      await setDoc(
+        doc(db, 'users', uid),
+        {
+          kg: round1(kg),
+          lb: round1(lb),
+          weightUnit: isMetric ? 'kg' : 'lb',
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      onSaved?.({ kg: round1(kg), lb: round1(lb) });
+    } catch (e) {
+      Alert.alert('Save failed', e?.message || String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const minDisp = isMetric ? KG_MIN : Math.round(kgToLb(KG_MIN));
+  const maxDisp = isMetric ? KG_MAX : Math.round(kgToLb(KG_MAX));
+  const unitLabel = isMetric ? 'kg' : 'lb';
 
   return (
     <View
-      onLayout={e => setW(Math.round(e.nativeEvent.layout.width))}
+      onLayout={(e) => setW(Math.round(e.nativeEvent.layout.width))}
       style={{
         paddingHorizontal: 16,
         justifyContent: 'center',
-        // backgroundColor: 'yellow',
         alignItems: 'center',
         height: height(80),
         width: '100%',
       }}
     >
-
-
-
-        <View style={{
-            flexDirection: 'row',
-            top: height(-5),
-          //  backgroundColor: 'yellow',
-            alignSelf: 'center',
-            alignItems: 'center'
-        }}>
-
-            <Text style={{
-            fontWeight: "700",
-                color: "#A6B0B8",
-             fontSize: size(20),
-            marginRight: width(10)
-        }}>
-             Imperial 
-            </Text>
-
-         <Switch
-          trackColor={{false: '#fff', true: '#0057FF'}}
-          thumbColor={isEnabled ? '#fff' : '#fff'}
+      {/* Unit toggle */}
+      <View style={{ flexDirection: 'row', top: height(-5), alignItems: 'center' }}>
+        <Text style={{ fontWeight: '700', color: '#A6B0B8', fontSize: size(20), marginRight: width(10) }}>
+          Imperial
+        </Text>
+        <Switch
+          value={isMetric}
+          onValueChange={onToggleUnit}
+          trackColor={{ false: '#fff', true: '#0057FF' }}
+          thumbColor="#fff"
           ios_backgroundColor="#D3DAE0"
-          onValueChange={toggleSwitch}
-          value={isEnabled}
         />
-
-
-        <Text style={{
-            fontWeight: "700",
-            marginLeft:  width(10),
-            fontSize: size(20)
-        }}>
-            Metric 
-         </Text>
-                    
-        </View>
-
-
-      {/* Custom label (no clipping, no jank) */}
-      <View style={{ alignItems: 'center', justifyContent: 'center', flexDirection: 'row', marginBottom: 8 }}>
-        <Text style={{ fontSize: 48, fontWeight: '800' }}>{display}</Text>
-        <Text style={{ fontSize: 28, marginLeft: 6 }}>kg</Text>
+        <Text style={{ fontWeight: '700', marginLeft: width(10), fontSize: size(20) }}>Metric</Text>
       </View>
 
+      {/* Current value */}
+      <View style={{ alignItems: 'center', flexDirection: 'row', marginBottom: 8 }}>
+        <Text style={{ fontSize: 48, fontWeight: '800' }}>{String(displayVal)}</Text>
+        <Text style={{ fontSize: 28, marginLeft: 6 }}>{unitLabel}</Text>
+      </View>
+
+      {/* Ruler (no save on change or release) */}
       {w > 0 && (
         <RulerPicker
-          key={w}
+          key={`${w}-${isMetric}`}
           ref={ref}
-          min={30}
-          max={200}
+          min={minDisp}
+          max={maxDisp}
           step={1}
           shortStep={1}
           longStep={5}
           gapBetweenSteps={10}
           height={140}
-          initialValue={initial}
-          fractionDigits={0}              // no decimals
-          decelerationRate="fast"         // snappier scroll
-          onValueChange={handleChange}    // throttled + haptics
-          onValueChangeEnd={(v) => {      // final precise value + confirm haptic
-            const n = Math.round(Number(v));
-            setValue(n);
-            onChange?.(n);
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); // ← add
-          }}
-
+          initialValue={displayVal}
+          fractionDigits={0}
+          decelerationRate="fast"
+          onValueChange={handleChange}
+          // NOTE: intentionally NO onValueChangeEnd that saves
           indicatorColor="#000"
           indicatorHeight={60}
           shortStepColor="#BDBDBD"
           longStepColor="#BDBDBD"
-
-          // hide built-in text to avoid clipping & extra work
           valueTextStyle={{ fontSize: 1, color: 'transparent' }}
           unitTextStyle={{ fontSize: 1, color: 'transparent' }}
         />
       )}
+
+      {/* Save button */}
+      <TouchableOpacity
+        onPress={onPressSave}
+        disabled={saving}
+        style={{
+          marginTop: height(3),
+          paddingVertical: 14,
+          paddingHorizontal: 28,
+          borderRadius: 10,
+          backgroundColor: saving ? '#BCC1CA' : '#000',
+        }}
+      >
+        <Text style={{ color: '#fff', fontSize: size(16), fontWeight: '800' }}>
+          {saving ? 'Saving…' : 'Save'}
+        </Text>
+      </TouchableOpacity>
     </View>
   );
 }

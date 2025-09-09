@@ -4,10 +4,17 @@ const CurrentScannedItemIdContext = createContext(null);
 
 export function CurrentScannedItemIdProvider({ children }) {
   const [currentItemId, setCurrentItemId] = useState(null);
+   const [currentItem, setCurrentItem] = useState(null);
 
   return (
     <CurrentScannedItemIdContext.Provider
-      value={{ currentItemId, setCurrentItemId }}
+      value={{ 
+        currentItemId, 
+        setCurrentItemId,
+        currentItem, 
+        setCurrentItem, 
+      
+    }}
     >
       {children}
     </CurrentScannedItemIdContext.Provider>

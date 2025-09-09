@@ -16,7 +16,7 @@ export default function RollingMetric({
   const v = Number.isFinite(Number(value)) ? Number(value) : 0;
 
   return (
-    <View style={[styles.card, style]}>
+    <View style={[style]}>
       <View style={{ flexDirection: 'row', alignItems: 'flex-end' }}>
         <AnimatedRollingNumber
           value={v}
@@ -35,14 +35,7 @@ export default function RollingMetric({
 }
 
 const styles = StyleSheet.create({
-  card: {
 
-    backgroundColor: '#fff',
-    shadowColor: '#000',
-    shadowOpacity: 0.06,
-    shadowRadius: 12,
-    elevation: 2,
-  },
   digits: { fontSize: 32, fontWeight: '800' },
   unit: { fontSize: 18, fontWeight: '600',  opacity: 0.9 },
   label: { marginTop: 6, fontSize: 14, color: '#6b7280', fontWeight: '600' },

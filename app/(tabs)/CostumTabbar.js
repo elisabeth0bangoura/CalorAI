@@ -1,30 +1,34 @@
 // app/Sheets/SheetsHost.js
 import { TrueSheet } from "@lodev09/react-native-true-sheet";
-import React, { useEffect } from "react";
+import { Check, ChevronLeft } from "lucide-react-native";
+import React, { memo, useEffect, useMemo } from "react";
 import { Button as RNButton, Text, TouchableOpacity, View } from "react-native";
+import { height, size, width } from "react-native-responsive-sizes";
 
 import CameraCarouselSwiper from "../Components/Camera/Camera";
-import PageAfterScanFood from "../Components/Camera/PageAfterScan/PageAfterScan_Scan_Food/PageAfterScan_Scan_Food";
-import { useCameraActive } from "../Context/CameraActiveContext";
-import { useSheets } from "../Context/SheetsContext";
-
-// Optional pages (fallback to Food page if missing)
 import PageAfterScan_Add_To_Inventory from "../Components/Camera/PageAfterScan/PageAfterScan_Add_To_Inventory/PageAfterScan_Add_To_Inventory";
 import Scan_AddExpirationDate from "../Components/Camera/PageAfterScan/PageAfterScan_Add_To_Inventory/Scan_AddExpirationDate";
 import PageAfterScan_Scan_Barcode from "../Components/Camera/PageAfterScan/PageAfterScan_Scan_Barcode/PageAfterScan_Scan_Barcode";
-import Edit_Scan_FoodScan from "../Components/Camera/PageAfterScan/PageAfterScan_Scan_Food/Edit_Scan_Food";
+import { default as Edit_Scan_FoodScan, default as Edit_ScanpageHome } from "../Components/Camera/PageAfterScan/PageAfterScan_Scan_Food/Edit_Scan_Food";
+import PageAfterScanFood from "../Components/Camera/PageAfterScan/PageAfterScan_Scan_Food/PageAfterScan_Scan_Food";
 import PageAfterScan_FoodLabel from "../Components/Camera/PageAfterScan/PageAfterScan_Scan_FoodLabel/PageAfterScan_FoodLabel";
-
-import { Check, ChevronLeft } from "lucide-react-native";
-import { height, size, width } from "react-native-responsive-sizes";
 import EditMyWeight from "../Components/EditMyWeight/EditMyWeight";
+import ScanPageHome from "../Components/ScanPageHome/ScanPageHome";
 
+import { useCameraActive } from "../Context/CameraActiveContext";
+import { useSheets } from "../Context/SheetsContext";
 
-
-
-
-
-
+/* ---- memo wrappers ---- */
+const MemoCameraCarousel = memo(CameraCarouselSwiper);
+const MemoAfterScanFood = memo(PageAfterScanFood);
+const MemoAfterScanBarcode = memo(PageAfterScan_Scan_Barcode);
+const MemoAfterScanFoodLabel = memo(PageAfterScan_FoodLabel);
+const MemoAfterScanInventory = memo(PageAfterScan_Add_To_Inventory);
+const MemoEditScanFood = memo(Edit_Scan_FoodScan);
+const MemoScanAddExpiration = memo(Scan_AddExpirationDate);
+const MemoEditMyWeight = memo(EditMyWeight);
+const MemoScanPageHome = memo(ScanPageHome);
+const MemoEdit_ScanpageHome = memo(Edit_ScanpageHome);
 
 export default function SheetsHost() {
   const {
@@ -33,41 +37,38 @@ export default function SheetsHost() {
     isS3Open, setIsS3Open,
     isS4Open, setIsS4Open,
     isS5Open, setIsS5Open,
-
-    isS7Open, setIsS7Open,
-    
-
-    // ✅ : Edit PageAfterScan (this must sit ABOVE s3)
     isS6Open, setIsS6Open,
+    isS7Open, setIsS7Open,
+    isS8Open, setIsS8Open,
+    isS9Open, setIsS9Open,
   } = useSheets();
 
   const { activeKey } = useCameraActive();
 
-  useEffect(() => { console.log("[SheetsHost] isS2Open ->", isS2Open); }, [isS2Open]);
-  useEffect(() => { console.log("[SheetsHost] isS3Open ->", isS3Open); }, [isS3Open]);
-  useEffect(() => { console.log("[SheetsHost] isS4Open ->", isS4Open); }, [isS4Open]);
-  useEffect(() => { console.log("[SheetsHost] isS5Open ->", isS5Open); }, [isS5Open]);
-  useEffect(() => { console.log("[SheetsHost] isS6Open ->", isS6Open); }, [isS6Open]);
-  useEffect(() => { console.log("[SheetsHost] is76Open ->", isS7Open); }, [isS7Open]);
+  useEffect(() => { console.log("[SheetsHost] s2 open ->", isS2Open); }, [isS2Open]);
+  useEffect(() => { console.log("[SheetsHost] s3 open ->", isS3Open); }, [isS3Open]);
+  useEffect(() => { console.log("[SheetsHost] s5 open ->", isS5Open); }, [isS5Open]);
+  useEffect(() => { console.log("[SheetsHost] s6 open ->", isS6Open); }, [isS6Open]);
+  useEffect(() => { console.log("[SheetsHost] s7 open ->", isS7Open); }, [isS7Open]);
+  useEffect(() => { console.log("[SheetsHost] s8 open ->", isS8Open); }, [isS8Open]);
+  useEffect(() => { console.log("[SheetsHost] s9 open ->", isS9Open); }, [isS9Open]);
 
-
-
-
-
-  const renderS3Content = () => {
+  /* Only build the heavy s3 body when s3 is open */
+  const S3Body = useMemo(() => {
+    if (!isS3Open) return null;
     switch (activeKey) {
       case "SCAN FOOD":
-        return <PageAfterScanFood />;
+        return <MemoAfterScanFood />;
       case "BARCODE":
-         return <PageAfterScan_Scan_Barcode />;
+        return <MemoAfterScanBarcode />;
       case "FOOD LABEL":
-        return <PageAfterScan_FoodLabel />
+        return <MemoAfterScanFoodLabel />;
       case "ADD TO INVENTORY":
-       return <PageAfterScan_Add_To_Inventory />;
+        return <MemoAfterScanInventory />;
       default:
-        return <PageAfterScanFood />;
+        return <MemoAfterScanFood />;
     }
-  };
+  }, [isS3Open, activeKey]);
 
   return (
     <>
@@ -93,92 +94,57 @@ export default function SheetsHost() {
         sizes={["large"]}
         cornerRadius={24}
         enablePanDownToClose
-        backgroundColor="#fff"
-        onChange={(index) => {
-          const open = typeof index === "number" && index >= 0;
-          setIsS2Open(open);
-          console.log("[SheetsHost] s2 index ->", index);
-        }}
-        onDismiss={() => {
-          setIsS2Open(false);
-          console.log("[SheetsHost] s2 dismissed");
-        }}
+        backgroundColor="#000"
+        onChange={(index) => setIsS2Open(typeof index === "number" && index >= 0)}
+        onDismiss={() => setIsS2Open(false)}
       >
         <View style={{ flex: 1, backgroundColor: "#fff" }}>
-          {isS2Open ? (
-            <CameraCarouselSwiper />
+          {isS2Open && !isS3Open ? (
+            <MemoCameraCarousel key="camera-mounted" />
           ) : (
-            <View style={{ padding: 16, gap: 10 }}>
-              <Text>Sheet 2 is closed (no camera mounted)</Text>
-             
+            <View key="camera-unmounted" style={{ padding: 16, gap: 10 }}>
+              <Text>{isS2Open ? "Results are open — camera paused" : "Sheet 2 closed"}</Text>
             </View>
           )}
         </View>
 
-        {/* s3 (Results) — content depends on active camera */}
+        {/* s3 (Results) */}
         <TrueSheet
           ref={register("s3")}
           sizes={["large"]}
           cornerRadius={24}
           enablePanDownToClose
-          backgroundColor="#fff"
-          onChange={(index) => {
-            const open = typeof index === "number" && index >= 0;
-            setIsS3Open(open);
-            console.log("[SheetsHost] s3 index ->", index, "activeKey ->", activeKey);
-          }}
-          onDismiss={() => {
-            setIsS3Open(false);
-            console.log("[SheetsHost] s3 dismissed");
-          }}
+          backgroundColor="#000"
+          onChange={(index) => setIsS3Open(typeof index === "number" && index >= 0)}
+          onDismiss={() => setIsS3Open(false)}
         >
-          {/* s3 content */}
-          {renderS3Content()}
+          {isS3Open ? S3Body : <View style={{ padding: 16 }} />}
 
-          {/* ✅ : Edit PageAfterScan — NESTED ABOVE s3 */}
+          {/* s6 (Edit PageAfterScan) */}
           <TrueSheet
             ref={register("s6")}
             sizes={["large"]}
             cornerRadius={24}
             enablePanDownToClose
             backgroundColor="#fff"
-            onChange={(index) => {
-              const open = typeof index === "number" && index >= 0;
-              setIsS6Open(open);
-              console.log("[SheetsHost] s6 (Edit PageAfterScan) index ->", index);
-            }}
-            onDismiss={() => {
-              setIsS6Open(false);
-              console.log("[SheetsHost] s6 (Edit PageAfterScan) dismissed");
-            }}
+            onChange={(index) => setIsS6Open(typeof index === "number" && index >= 0)}
+            onDismiss={() => setIsS6Open(false)}
           >
-            <Edit_Scan_FoodScan />
+            {isS6Open ? <MemoEditScanFood /> : <View style={{ padding: 16 }} />}
           </TrueSheet>
 
-
-
-
-            <TrueSheet
-              ref={register("s5")}
-              sizes={["large"]}
-              cornerRadius={24}
-              enablePanDownToClose
-              backgroundColor="#fff"
-             // onChange={(index) => setIsS5Open(typeof index === "number" && index >= 0)}
-            onChange={(index) => {
-              const open = typeof index === "number" && index >= 0;
-              setIsS5Open(open);
-              console.log("[SheetsHost] s5 (Edit PageAfterScan) index ->", index);
-            }}
-
-             onDismiss={() => {
-              setIsS5Open(false);
-              console.log("[SheetsHost] s5 (Edit PageAfterScan) dismissed");
-            }}
-            >
-            <Scan_AddExpirationDate />
-            </TrueSheet>
-
+          {/* s5 (Add Expiration) */}
+          <TrueSheet
+            ref={register("s5")}
+            sizes={["large"]}
+            cornerRadius={24}
+            enablePanDownToClose
+            backgroundColor="#fff"
+            onChange={(index) => setIsS5Open(typeof index === "number" && index >= 0)}
+            onDismiss={() => setIsS5Open(false)}
+          >
+            {isS5Open ? <MemoScanAddExpiration /> : <View style={{ padding: 16 }} />}
+          </TrueSheet>
         </TrueSheet>
       </TrueSheet>
 
@@ -199,10 +165,8 @@ export default function SheetsHost() {
         </View>
       </TrueSheet>
 
-      {/* s5 */}
-
-
-       <TrueSheet
+      {/* s7 (Weight) */}
+      <TrueSheet
         ref={register("s7")}
         sizes={["large"]}
         cornerRadius={24}
@@ -211,89 +175,89 @@ export default function SheetsHost() {
         onChange={(index) => setIsS7Open(typeof index === "number" && index >= 0)}
         onDismiss={() => setIsS7Open(false)}
       >
-        <View style={{ padding: 16, backgroundColor: "#fff", gap: 10 }}>
-       
-
-       <Text style={{
-        top: height(5),
-        fontWeight: "800",
-        fontSize: size(20),
-        alignSelf: 'center',
-       }}>
-        What's your current Weight?
-       </Text>
-            <EditMyWeight />
-          
-               
-        </View>
-
-
-
-
-
-
-<View style={{
- top: height(78),
- position: 'absolute',
- width: "100%",
-                
-}}>
-
-<TouchableOpacity  
-           activeOpacity={0.8}
-           onPress={() =>  dismiss("s7")}
-            style={{
-               height: size(60),
-                 width: size(65),
-                paddingHorizontal: 25,
-                left: width(5),
-               
-                
-                justifyContent: 'center',
-                alignItems: 'center',
-                borderRadius: 15,
-                backgroundColor: '#EDEFF1',
-                
-            }}>
-            <ChevronLeft size={25} />
-        </TouchableOpacity>
-
- <TouchableOpacity  
-           activeOpacity={0.8}
-           onPress={() => {
-             dismiss("s7")
-          }}
-            style={{
-               height: size(60),
-                // width: width(35),
-                paddingHorizontal: 25,
-                right: width(5),
-              
-                position: 'absolute',
-                 
-                flexDirection: 'row',
-                justifyContent: 'center',
-                alignItems: 'center',
-                borderRadius: 15,
-                backgroundColor: '#151515',
-                
-            }}>
-            <Text style={{
-                color: '#fff',
-                fontSize: size(17),
-                marginRight: width(3),
-                fontWeight: "bold"
-            }}>
-                Save
+        {isS7Open ? (
+          <View style={{ padding: 16, backgroundColor: "#fff", gap: 10 }}>
+            <Text style={{ top: height(5), fontWeight: "800", fontSize: size(20), alignSelf: "center" }}>
+              What's your current Weight?
             </Text>
+            <MemoEditMyWeight />
+            <View style={{ top: height(78), position: "absolute", width: "100%" }}>
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={() => dismiss("s7")}
+                style={{
+                  height: size(60),
+                  width: size(65),
+                  paddingHorizontal: 25,
+                  left: width(5),
+                  justifyContent: "center",
+                  alignItems: "center",
+                  borderRadius: 15,
+                  backgroundColor: "#EDEFF1",
+                }}
+              >
+                <ChevronLeft size={25} />
+              </TouchableOpacity>
 
-            <Check size={18} color={"#fff"} />
-        </TouchableOpacity>
-
-         </View>
-        
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={() => dismiss("s7")}
+                style={{
+                  height: size(60),
+                  paddingHorizontal: 25,
+                  right: width(5),
+                  position: "absolute",
+                  flexDirection: "row",
+                  justifyContent: "center",
+                  alignItems: "center",
+                  borderRadius: 15,
+                  backgroundColor: "#151515",
+                }}
+              >
+                <Text style={{ color: "#fff", fontSize: size(17), marginRight: width(3), fontWeight: "bold" }}>
+                  Save
+                </Text>
+                <Check size={18} color={"#fff"} />
+              </TouchableOpacity>
+            </View>
+          </View>
+        ) : (
+          <View style={{ padding: 16 }} />
+        )}
       </TrueSheet>
-    
+
+      {/* s8 (Scan page home) */}
+      <TrueSheet
+        ref={register("s8")}
+        sizes={["large"]}
+        cornerRadius={24}
+        enablePanDownToClose
+        backgroundColor="#fff"
+        onChange={(index) => setIsS8Open(typeof index === "number" && index >= 0)}
+        onDismiss={() => setIsS8Open(false)}
+      >
+        {/* Mount content ONLY when s8 is open */}
+        {isS8Open ? (
+          <>
+            {/* s9 (Edit ScanPageHome) — mount only while open */}
+            <TrueSheet
+              ref={register("s9")}
+              sizes={["large"]}
+              cornerRadius={24}
+              enablePanDownToClose
+              backgroundColor="#fff"
+              onChange={(index) => setIsS9Open(typeof index === "number" && index >= 0)}
+              onDismiss={() => setIsS9Open(false)}
+            >
+              {isS9Open ? <MemoEdit_ScanpageHome /> : <View style={{ padding: 16 }} />}
+            </TrueSheet>
+
+            <MemoScanPageHome />
+          </>
+        ) : (
+          <View style={{ padding: 16 }} />
+        )}
+      </TrueSheet>
     </>
   );
 }

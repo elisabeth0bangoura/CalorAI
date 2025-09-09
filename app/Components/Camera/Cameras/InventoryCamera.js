@@ -24,6 +24,8 @@ import { getAuth } from "@react-native-firebase/auth";
 import {
   addDoc,
   collection,
+  doc,
+  getDoc,
   getFirestore,
   serverTimestamp,
 } from "@react-native-firebase/firestore";
@@ -63,7 +65,7 @@ function fallbackUnitsFromText(txt = "") {
   return { units_per_pack: count, unit_label: label, unit_count_confidence: "estimated" };
 }
 
-// keep icon as-is with small fallback
+// keep icon as-is with small fallback (no static list)
 const safeIconName = (s) => {
   const name = typeof s === "string" ? s.trim() : "";
   return name.length ? name.slice(0, 40) : "Utensils";
@@ -77,6 +79,164 @@ const withTimeout = (p, ms, tag = "op") =>
       setTimeout(() => rej(new Error(`${tag} timed out after ${ms}ms`)), ms)
     ),
   ]);
+
+/* ----------------------- HEALTH PROFILE + PROMS ---------------------------- */
+const fetchUserHealthProfile = async (uid, addLog) => {
+  try {
+    const db = getFirestore();
+    const snap = await getDoc(doc(db, "users", uid));
+    if (!snap.exists) return {};
+    const data = snap.data() || {};
+    const habitsContainer = data.habits && typeof data.habits === "object" ? data.habits : {};
+    const habits = {
+      reduceCoffee:
+        typeof data.reduceCoffee === "boolean"
+          ? data.reduceCoffee
+          : typeof habitsContainer.reduceCoffee === "boolean"
+          ? habitsContainer.reduceCoffee
+          : false,
+      stopSmoking:
+        typeof data.stopSmoking === "boolean"
+          ? data.stopSmoking
+          : typeof habitsContainer.stopSmoking === "boolean"
+          ? habitsContainer.stopSmoking
+          : false,
+    };
+    addLog?.("[HEALTH] loaded settings");
+    return {
+      kidneySettings: data.kidneySettings || {},
+      heartSettings: data.heartSettings || {},
+      diabetesSettings: data.diabetesSettings || {},
+      habits,
+    };
+  } catch (e) {
+    addLog?.(`[HEALTH] load failed: ${e?.message || e}`);
+    return {};
+  }
+};
+
+const pct = (v, limit) =>
+  Number.isFinite(v) && Number.isFinite(limit) && limit > 0
+    ? Math.round((v / limit) * 100)
+    : null;
+
+const satFatCapFor = (level = "moderate") => {
+  const m = String(level || "moderate").toLowerCase();
+  if (m.startsWith("low")) return 10;  // g/day
+  if (m.startsWith("high")) return 20;
+  return 13;                           // default
+};
+
+const looksCaffeinated = ({ title, items }) => {
+  const hay = [
+    String(title || ""),
+    ...(Array.isArray(items) ? items.map(i => `${i?.name || ""} ${i?.subtitle || ""}`) : []),
+  ].join(" ").toLowerCase();
+  return /(coffee|espresso|latte|cappuccino|americano|mocha|cold\s*brew|energy\s*drink|caffeine|mate|yerba|guarana|cola|tea|matcha)/i.test(hay);
+};
+const buildHealthPrompts = ({ macros, profile, product }) => {
+  const lines = [];
+  const parts = {};
+
+  // Kidney
+  if (profile?.kidneySettings) {
+    const k = profile.kidneySettings;
+    const sodiumLimit = Number.isFinite(+k.sodiumLimitMg) ? +k.sodiumLimitMg : 2000;
+    const sodiumP = pct(macros.sodium_mg, sodiumLimit);
+    let kidney = `Kidney: `;
+    if (Number.isFinite(macros.sodium_mg)) {
+      kidney += `${macros.sodium_mg} mg sodium`;
+      if (sodiumP != null) kidney += ` (${sodiumP}% of your ${sodiumLimit} mg/day).`;
+      if (sodiumP != null && sodiumP >= 40)
+        kidney += ` Consider low-sodium options or less seasoning.`;
+    } else {
+      kidney += `sodium not visible on label.`;
+    }
+    if (k.proteinLevel && macros.protein_g != null) {
+      const pl = String(k.proteinLevel).toLowerCase();
+      if (pl.startsWith("low") && macros.protein_g > 25)
+        kidney += ` Protein ${macros.protein_g} g may be high for your low-protein target.`;
+    }
+    parts.kidney = kidney;      // ⟵ no emoji
+    lines.push(kidney);         // ⟵ no emoji
+  }
+
+  // Heart
+  if (profile?.heartSettings) {
+    const h = profile.heartSettings;
+    const cap = satFatCapFor(h.satFatLimit);
+    let heart = `Heart: `;
+    if (macros.fat_g != null) {
+      heart += `fat ${macros.fat_g} g`;
+      if (macros.fat_g >= 17) heart += ` — on the higher side; keep other meals lighter today.`;
+      else heart += ` — reasonable for most plans.`;
+      heart += ` Aim saturated fat ≈${cap} g/day (${h.satFatLimit || "moderate"}).`;
+    } else {
+      heart += `fat not visible on label.`;
+    }
+    parts.heart = heart;        // ⟵ no emoji
+    lines.push(heart);          // ⟵ no emoji
+  }
+
+  // Diabetes
+  if (profile?.diabetesSettings) {
+    let diabetes = `Diabetes: `;
+    const flags = [];
+    if (macros.carbs_g != null && macros.carbs_g >= 45) flags.push(`carbs ${macros.carbs_g} g`);
+    if (macros.sugar_g != null && macros.sugar_g >= 15) flags.push(`sugars ${macros.sugar_g} g`);
+    if (macros.fiber_g != null && macros.fiber_g < 4)   flags.push(`low fiber (${macros.fiber_g} g)`);
+    diabetes += flags.length
+      ? flags.join(", ") + ` — pair with lean protein/veg or halve the portion.`
+      : `no major flags detected for this serving.`;
+    parts.diabetes = diabetes;  // ⟵ no emoji
+    lines.push(diabetes);       // ⟵ no emoji
+  }
+
+  // Habits
+  const caffeinated = looksCaffeinated(product || {});
+  if (profile?.habits?.reduceCoffee) {
+    let coffee = `Coffee: you're cutting back. `;
+    coffee += caffeinated
+      ? `This looks caffeinated — try decaf or a smaller size today.`
+      : `Nice — this seems caffeine-free.`;
+    parts.reduceCoffee = coffee; // ⟵ no emoji
+    lines.push(coffee);
+  }
+  if (profile?.habits?.stopSmoking) {
+    let smoke = `Stop smoking: keep momentum. `;
+    smoke += caffeinated
+      ? `Coffee can be a trigger; swap with water or take a short walk after.`
+      : `Use meals as a cue to breathe deeply instead of lighting up.`;
+    parts.stopSmoking = smoke;   // ⟵ no emoji
+    lines.push(smoke);
+  }
+
+  const text =
+    lines.length
+      ? `Personalized flags\n• ${lines.join("\n• ")}`
+      : "Personalized flags: none detected for your current settings.";
+
+  return {
+    text,
+    parts,
+    numbers: {
+      sodium_mg: macros.sodium_mg ?? null,
+      carbs_g: macros.carbs_g ?? null,
+      fat_g: macros.fat_g ?? null,
+      fiber_g: macros.fiber_g ?? null,
+      sugar_g: macros.sugar_g ?? null,
+      protein_g: macros.protein_g ?? null,
+    },
+    profile_used: {
+      kidneySettings: profile?.kidneySettings || null,
+      heartSettings: profile?.heartSettings || null,
+      diabetesSettings: profile?.diabetesSettings || null,
+      habits: profile?.habits || null,
+    },
+  };
+};
+
+/* --------------------- /HEALTH PROFILE + PROMS ---------------------------- */
 
 /* ----------------- component ----------------- */
 export default forwardRef(function InventoryCamera(
@@ -116,8 +276,10 @@ export default forwardRef(function InventoryCamera(
     formatScannedAt,
     expirationDate,
     expirationDateNote,
+    setProms, // 👈 add proms to context/UI
   } = useScanResults();
-  const {currentItemId, setCurrentItemId} = useCurrentScannedItemId()
+  const { currentItemId, setCurrentItemId } = useCurrentScannedItemId();
+
   // register S3 once
   const didRegister = useRef(false);
   useEffect(() => {
@@ -131,21 +293,18 @@ export default forwardRef(function InventoryCamera(
   const [permission, requestPermission] = useCameraPermissions();
   const [loading, setLoading] = useState(false);
 
-
+  const shouldShowCamera = isS2Open && isActive && !isS3Open;
 
   // ✅ Cleanup camera + staged timers when S2 closes
-useEffect(() => {
-  if (!isS2Open) {
-    console.log("[Camera] S2 closed → unmounting camera & clearing timers");
-    clearStagedTimers();
-    cameraRef.current = null;     // drop camera ref
-    autoOnce.current = false;     // reset auto trigger
-    setLoading(false);            // stop loading spinner
-  }
-}, [isS2Open]);
-
-
-
+  useEffect(() => {
+    if (!isS2Open) {
+      console.log("[Camera] S2 closed → unmounting camera & clearing timers");
+      clearStagedTimers();
+      cameraRef.current = null;     // drop camera ref
+      autoOnce.current = false;     // reset auto trigger
+      setLoading(false);            // stop loading spinner
+    }
+  }, [isS2Open]);
 
   // staged loader timers (so we can cancel when finishing)
   const stagedTimersRef = useRef([]);
@@ -279,7 +438,7 @@ ${schema}
   }
 
   // normalize + push to context + save
-  const applyFinalResult = async ({ analyzed, uid, cloudUrl }) => {
+  const applyFinalResult = async ({ analyzed, uid, cloudUrl, profile }) => {
     // infer units if missing
     if (analyzed && !toNum(analyzed?.units_per_pack, 0)) {
       const fromTxt = fallbackUnitsFromText(
@@ -314,6 +473,14 @@ ${schema}
     setList?.(itemsSafe);
     onScanList?.(itemsSafe);
 
+    // ✅ Build personalized proms (uses profile)
+    const proms = buildHealthPrompts({
+      macros: { sodium_mg: sodium, carbs_g: carbs, fat_g: fat, fiber_g: fiber, sugar_g: sugar, protein_g: protein },
+      profile,
+      product: { title: titleSafe, items: itemsSafe },
+    });
+    setProms?.(proms);
+
     const modelAlts = Array.isArray(analyzed?.alternatives) ? analyzed.alternatives : [];
     const alts = new Map();
     modelAlts.forEach((a) => {
@@ -341,6 +508,8 @@ ${schema}
       expiration_hint: analyzed?.expiration_hint ?? "",
       experationDate: analyzed?.experationDate ?? analyzed?.expiration_iso ?? "",
       experationDateNote: analyzed?.experationDateNote ?? analyzed?.expiration_hint ?? "",
+      proms,                // 👈 include in UI result blob too
+      profile_used: proms?.profile_used || null,
       _ready: true,
     };
 
@@ -355,51 +524,56 @@ ${schema}
     try {
       const db = getFirestore();
       const colRef = collection(db, "users", uid, "Inventory");
-    const docRef = await addDoc(colRef, {
-      title: titleSafe,
-      calories_kcal_total: Number.isFinite(kcalSafe) ? kcalSafe : null,
-      protein_g: protein,
-      fat_g: fat,
-      sugar_g: sugar,
-      carbs_g: carbs,
-      fiber_g: fiber,
-      sodium_mg: sodium,
-      health_score: health,
-      items: itemsSafe,
-      alternatives: finalAlts,
-      units_per_pack: toNum(analyzed?.units_per_pack, 0),
-      unit_label: toStr(analyzed?.unit_label, ""),
-      unit_count_confidence: toStr(analyzed?.unit_count_confidence, ""),
-      net_quantity:
-        analyzed?.net_quantity && typeof analyzed.net_quantity === "object"
-          ? analyzed.net_quantity
-          : { value: 0, unit: "", text: "" },
-      serving_size: toStr(analyzed?.serving_size, ""),
-      servings_per_container: toNum(analyzed?.servings_per_container, 0),
-      image_local_uri: null,
-      image_cloud_url: cloudUrl || null,
-      scanned_at_pretty: formatScannedAt?.() || null,
-      expirationDate:
-        (expirationDate && String(expirationDate)) ||
-        analyzed?.expiration_iso ||
-        analyzed?.experationDate ||
-        "",
-      expirationDateNote:
-        (expirationDateNote && String(expirationDateNote)) ||
-        analyzed?.expiration_hint ||
-        analyzed?.experationDateNote ||
-        "",
-      created_at: serverTimestamp(),
-      raw: JSON.stringify(resultBlob),
-      result: resultBlob,
-    });
+      const docRef = await addDoc(colRef, {
+        title: titleSafe,
+        calories_kcal_total: Number.isFinite(kcalSafe) ? kcalSafe : null,
+        protein_g: protein,
+        fat_g: fat,
+        sugar_g: sugar,
+        carbs_g: carbs,
+        fiber_g: fiber,
+        sodium_mg: sodium,
+        health_score: health,
+        items: itemsSafe,
+        alternatives: finalAlts,
+        units_per_pack: toNum(analyzed?.units_per_pack, 0),
+        unit_label: toStr(analyzed?.unit_label, ""),
+        unit_count_confidence: toStr(analyzed?.unit_count_confidence, ""),
+        net_quantity:
+          analyzed?.net_quantity && typeof analyzed.net_quantity === "object"
+            ? analyzed.net_quantity
+            : { value: 0, unit: "", text: "" },
+        serving_size: toStr(analyzed?.serving_size, ""),
+        servings_per_container: toNum(analyzed?.servings_per_container, 0),
 
-   // ✅ Save the new doc ID in context
-   setCurrentItemId(docRef.id);
-   addLog("Saved to Firestore with ID: " + docRef.id);
-} catch (err) {
-  addLog(`[ERR] Firestore save: ${err?.message || err}`);
-}
+        // personalized health prompts
+        proms,                        // 👈 saved
+        profile_used: proms?.profile_used || null, // 👈 saved
+
+        image_local_uri: null,
+        image_cloud_url: cloudUrl || null,
+        scanned_at_pretty: formatScannedAt?.() || null,
+        expirationDate:
+          (expirationDate && String(expirationDate)) ||
+          analyzed?.expiration_iso ||
+          analyzed?.experationDate ||
+          "",
+        expirationDateNote:
+          (expirationDateNote && String(expirationDateNote)) ||
+          analyzed?.expiration_hint ||
+          analyzed?.experationDateNote ||
+          "",
+        created_at: serverTimestamp(),
+        raw: JSON.stringify(resultBlob),
+        result: resultBlob,
+      });
+
+      // ✅ Save the new doc ID in context
+      setCurrentItemId(docRef.id);
+      addLog("Saved to Firestore with ID: " + docRef.id);
+    } catch (err) {
+      addLog(`[ERR] Firestore save: ${err?.message || err}`);
+    }
   };
 
   // Do the scan (exposed + used internally)
@@ -425,6 +599,9 @@ ${schema}
         console.log("Missing OpenAI API key");
         return;
       }
+
+      // 🔹 Load health profile BEFORE analysis
+      const profile = await fetchUserHealthProfile(uid, addLog);
 
       resetScan();
       addLog("Scan started");
@@ -480,7 +657,7 @@ ${schema}
         }
       })();
 
-      // 4) Analyze (mini) – if it fails or looks empty, DO NOT set numbers
+      // 4) Analyze (mini)
       addLog("Analyzing (mini)…");
       let analyzed = null;
       try {
@@ -501,12 +678,12 @@ ${schema}
       // If mini result is usable -> apply and finish
       if (analyzed && !allZeroish(analyzed)) {
         await uploadPromise; // ensure we have URL for saving
-        await applyFinalResult({ analyzed, uid, cloudUrl });
+        await applyFinalResult({ analyzed, uid, cloudUrl, profile });
         clearStagedTimers();
         return;
       }
 
-      // Otherwise, keep loader up (no dummy 100 kcal!), kick a refine using best image URL
+      // Otherwise, refine using best image URL
       addLog("Refining with full model…");
       const urlForRefine = (cloudUrl || (await uploadPromise)) || null;
       try {
@@ -520,16 +697,14 @@ ${schema}
         });
 
         if (better && !allZeroish(better)) {
-          await applyFinalResult({ analyzed: better, uid, cloudUrl });
+          await applyFinalResult({ analyzed: better, uid, cloudUrl, profile });
           clearStagedTimers();
         } else {
           addLog("Vision returned empty; still waiting.");
-          // keep loader visible at current stage; don't reset to 0
           setResult((prev) => ({ ...(prev || {}), _ready: false }));
         }
       } catch (e) {
         addLog(`[warn] refine: ${e?.message || e}`);
-        // keep loader visible at current stage; don't reset to 0
         setResult((prev) => ({ ...(prev || {}), _ready: false }));
       }
     } catch (e) {
@@ -556,25 +731,21 @@ ${schema}
   return (
     <View style={{ height: "100%", width: "100%" }}>
       <View style={{ height: height(100), width: width(100), backgroundColor: "#000" }}>
-       {isS2Open && isActive && !isS3Open ? (
-        <View style={{ height: "100%", width: "100%" }} pointerEvents={inCarousel ? "none" : "auto"}>
-          <CameraView
-            ref={cameraRef}
+        {shouldShowCamera ? (
+          <View
             style={{ height: "100%", width: "100%" }}
-            facing="back"
-            flash="off"
-            autofocus="on"
-            onCameraReady={() => {
-              addLog("Camera ready");
-              if (!autoOnce.current && isS2Open && isActive) {
-                autoOnce.current = true;
-                doScan();
-              }
-            }}
-          />
-        </View>
-      ) : null}
-
+            pointerEvents={inCarousel ? "none" : "auto"}
+          >
+            <CameraView
+              ref={cameraRef}
+              style={{ height: "100%", width: "100%" }}
+              facing="back"
+              flash="off"
+              autofocus="on"
+              onCameraReady={() => addLog("Camera ready")}
+            />
+          </View>
+        ) : null}
 
         {/* Show overlay only while sheet is NOT open */}
         {loading && !isS3Open && (

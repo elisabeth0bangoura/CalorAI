@@ -21,6 +21,7 @@ import { height, width } from "react-native-responsive-sizes";
 import PageAfterScan_FoodLabel from "../PageAfterScan/PageAfterScan_Scan_FoodLabel/PageAfterScan_FoodLabel";
 
 // ✅ Firebase
+import { useCurrentScannedItemId } from "@/app/Context/CurrentScannedItemIdContext";
 import { getAuth } from "@react-native-firebase/auth";
 import {
   addDoc,
@@ -40,6 +41,112 @@ const safeIconName = (s) =>
   typeof s === "string" && LUCIDE_SAFE.has(s.trim()) ? s.trim() : "Utensils";
 const toNum = (n, d = 0) => (Number.isFinite(+n) ? +n : d);
 const toStr = (s, d = "") => (typeof s === "string" && s.trim().length ? s.trim() : d);
+const norm = (s = "") => String(s).trim().toLowerCase();
+
+/* lightweight categorizer (for kcal reconciliation) */
+const categoryOf = (name = "") => {
+  const n = name.toLowerCase();
+  if (n.includes("salt") || n.includes("sodium")) return "salt";
+  if (/(wheat|flour|noodle|pasta|cracker|bread|rice)/i.test(n)) return "starch";
+  if (/(season|powder|sauce|flavor|spice)/i.test(n)) return "seasoning";
+  if (/(oil|fat|butter|cream)/i.test(n)) return "fat";
+  if (/(sugar|glucose|fructose|syrup|honey)/i.test(n)) return "sugar";
+  if (/(veg|onion|garlic|cabbage|carrot|pepper|tomato)/i.test(n)) return "veg";
+  return "other";
+};
+
+/* make per-ingredient kcal sum == package kcal */
+const reconcileIngredientsToTotal = (rows, targetKcal) => {
+  const baseRows = rows.map((r) => {
+    const cat = categoryOf(r.name);
+    const base =
+      cat === "salt"
+        ? 0
+        : Number.isFinite(r?.estimated_kcal)
+        ? Number(r.estimated_kcal)
+        : (Number.isFinite(r?.estimated_grams) && Number.isFinite(r?.kcal_per_100g))
+        ? (Number(r.estimated_grams) * Number(r.kcal_per_100g)) / 100
+        : 0;
+    return { ...r, _cat: cat, _base: Math.max(0, base) };
+  });
+
+  const target = Number(targetKcal);
+  if (!Number.isFinite(target) || target <= 0) {
+    return baseRows.map((r) => ({ ...r, estimated_kcal: Math.round(r._base) }));
+  }
+
+  let baseSum = baseRows.reduce((s, r) => s + r._base, 0);
+  if (baseSum <= 0.0001) {
+    // heuristics by category
+    let shares = baseRows.map((r) => {
+      if (r._cat === "starch") return 0.6;
+      if (r._cat === "fat") return 0.2;
+      if (r._cat === "sugar") return 0.15;
+      if (r._cat === "seasoning") return 0.04;
+      if (r._cat === "veg") return 0.01;
+      return 0.0;
+    });
+    if (shares.every((v) => v === 0)) shares = baseRows.map(() => 1 / baseRows.length);
+    const totalShare = shares.reduce((a, b) => a + b, 0) || 1;
+    const raw = shares.map((s) => (s / totalShare) * target);
+    let out = raw.map((v) => Math.max(0, Math.round(v)));
+    let diff = target - out.reduce((a, b) => a + b, 0);
+    const starchIdxs = baseRows.map((r, i) => (r._cat === "starch" ? i : -1)).filter((i) => i >= 0);
+    const pool = starchIdxs.length ? starchIdxs : [out.length - 1];
+    if (diff > 0) for (let i = 0; i < diff; i++) out[pool[i % pool.length]] += 1;
+    else for (let i = 0; i < -diff; i++) out[pool[i % pool.length]] = Math.max(0, out[pool[i % pool.length]] - 1);
+    return baseRows.map((r, i) => ({ ...r, estimated_kcal: out[i] }));
+  }
+
+  const scale = target / baseSum;
+  let assigned = baseRows.map((r) => Math.max(0, Math.round(r._base * scale)));
+
+  // cap seasonings
+  const SEASONING_CAP = 120;
+  let excess = 0;
+  assigned = assigned.map((v, i) => {
+    if (baseRows[i]._cat === "seasoning" && v > SEASONING_CAP) {
+      excess += v - SEASONING_CAP;
+      return SEASONING_CAP;
+    }
+    return v;
+  });
+  if (excess > 0) {
+    const starchIdxs = baseRows.map((r, i) => (r._cat === "starch" ? i : -1)).filter((i) => i >= 0);
+    const pool = starchIdxs.length ? starchIdxs : [assigned.length - 1];
+    const per = Math.floor(excess / pool.length);
+    pool.forEach((i) => (assigned[i] += per));
+    let rem = excess - per * pool.length;
+    for (let k = 0; k < rem; k++) assigned[pool[k % pool.length]] += 1;
+  }
+
+  // final rounding repair
+  let sumNow = assigned.reduce((a, b) => a + b, 0);
+  let diff = target - sumNow;
+  const starchIdxs = baseRows.map((r, i) => (r._cat === "starch" ? i : -1)).filter((i) => i >= 0);
+  const pool = starchIdxs.length ? starchIdxs : [assigned.length - 1];
+  if (diff > 0) for (let i = 0; i < diff; i++) assigned[pool[i % pool.length]] += 1;
+  else for (let i = 0; i < -diff; i++) assigned[pool[i % pool.length]] = Math.max(0, assigned[pool[i % pool.length]] - 1);
+
+  return baseRows.map((r, i) => ({ ...r, estimated_kcal: assigned[i] }));
+};
+
+/* bucket helpers (±7% rule) */
+const normalizeBucket = (b) => {
+  const s = norm(b);
+  if (s.startsWith("low") || s === "less" || s === "lower") return "lower";
+  if (s.startsWith("high") || s === "more" || s === "higher") return "higher";
+  if (s.startsWith("sim") || s === "same") return "similar";
+  return null;
+};
+const deriveBucket = (altKcal, baseKcal) => {
+  const a = Number(altKcal), b = Number(baseKcal);
+  if (!Number.isFinite(a) || !Number.isFinite(b) || b <= 0) return "similar";
+  const diff = (a - b) / b;
+  if (diff <= -0.07) return "lower";
+  if (diff >= 0.07) return "higher";
+  return "similar";
+};
 
 /* LLM-based icon picker (no hard-coded regex rules) */
 async function pickIconForProduct({ category, title, apiKey, log = console.log }) {
@@ -441,52 +548,44 @@ async function fillFromOFFIfMissing(label, log = console.log) {
   return merged;
 }
 
-/* ---------- Alternatives (LLM) ---------- */
-async function fetchAlternativesLLM({ title, category, baseKcal, apiKey, log = console.log }) {
-  const body = {
-    model: "gpt-4o-mini",
-    temperature: 0.1,
-    response_format: { type: "json_object" },
-    messages: [
-      {
-        role: "system",
-        content:
-`You are a nutrition coach. Given a scanned food and its category, return up to 8 lower-calorie alternatives.
-Prefer lighter variants first, then close substitutes. Names must be generic (no brands).
-Return ONLY JSON:
-{ "alternatives":[ { "name":"Skimmed milk", "calories_diff": -60 }, ... ] }`
-      },
-      {
-        role: "user",
-        content: `Item: ${toStr(title, "(unknown)")}
-Category: ${toStr(category, "")}
-Base calories/serving: ${Number.isFinite(+baseKcal) ? +baseKcal : "unknown"}
-JSON only.`,
-      },
-    ],
-  };
+/* ---------- Alternatives (LLM, detailed like Scan_Food) ---------- */
+async function fetchAlternativesDetailed({ title, brand, kcal, apiKey, log = console.log }) {
+  const systemPrompt = `
+Generate 8–12 realistic packaged-food alternatives. Prefer same brand first (variants, sizes), then other brands and generic equivalents.
+Each needs approximate per-package kcal and a bucket vs base:
+- "lower" ≤ −7%, "similar" within ±7%, "higher" ≥ +7%.
+Return JSON:
+{ "alternatives":[{ "brand":"string","name":"string","flavor_or_variant":"string","calories_per_package_kcal":number,"bucket":"lower|similar|higher"}] }`.trim();
+
+  const userMsg = `
+Base product:
+- title: ${title || "Unknown product"}
+- brand: ${brand || "(none)"}
+- kcal per package: ${Number.isFinite(Number(kcal)) ? Number(kcal) : "(unknown)"}
+Return JSON only.`.trim();
 
   try {
     const r = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        response_format: { type: "json_object" },
+        temperature: 0.15,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userMsg },
+        ],
+      }),
     });
-    log("[ALTS] status:", r.status);
-    if (!r.ok) return [];
+    log("[ALTS-DETAILED] status:", r.status);
+    if (!r.ok) return { alternatives: [] };
     const j = await r.json();
     const parsed = JSON.parse(j?.choices?.[0]?.message?.content || "{}");
-    const arr = Array.isArray(parsed?.alternatives) ? parsed.alternatives : [];
-    return arr
-      .map(a => ({
-        name: toStr(a?.name, "").trim(),
-        calories_diff: Number.isFinite(+a?.calories_diff) ? Math.round(+a.calories_diff) : null,
-      }))
-      .filter(a => a.name && a.calories_diff !== null)
-      .slice(0, 8);
+    return parsed && typeof parsed === "object" ? parsed : { alternatives: [] };
   } catch (e) {
-    log("[ALTS] error:", e?.message || String(e));
-    return [];
+    log("[ALTS-DETAILED] error:", e?.message || String(e));
+    return { alternatives: [] };
   }
 }
 
@@ -582,7 +681,7 @@ function mapLabelToAnalyzed(label) {
   };
 }
 
-/* ---------- NEW: product-only breakdown (no macros here) ---------- */
+/* ---------- NEW: product-only breakdown (kept, but we now also do ingredients) ---------- */
 async function buildProductOnlyBreakdown(analyzed, apiKey, log = console.log) {
   const sizeStr = toStr(analyzed?.size, "");
   const title = toStr(analyzed?.title, "Product");
@@ -610,7 +709,7 @@ async function buildProductOnlyBreakdown(analyzed, apiKey, log = console.log) {
   ];
 }
 
-/* ---------- partial payload for the UI ---------- */
+/* ---------- partial payload for the UI (+hint) ---------- */
 function buildPartialFromLabel({ label, imageUrl }) {
   const serving = Number.isFinite(+label?.serving_size_g) ? +label.serving_size_g : null;
   const perServing = {
@@ -622,7 +721,10 @@ function buildPartialFromLabel({ label, imageUrl }) {
     fiber_g: Number.isFinite(+label?.fiber_g_per_serving) ? +label.fiber_g_per_serving : null,
     sodium_mg: Number.isFinite(+label?.sodium_mg_per_serving) ? +label.sodium_mg_per_serving : null,
   };
+  const hint = "Tip: Fill the frame with the full nutrition panel + ingredients + net weight. Avoid glare, hold steady, and keep text flat.";
+
   return {
+    hint,
     scan_summary: {
       image_url: imageUrl || null,
       servings_per_container: Number.isFinite(+label?.servings_per_package) ? +label.servings_per_package : null,
@@ -635,6 +737,71 @@ function buildPartialFromLabel({ label, imageUrl }) {
   };
 }
 
+/* ✅ ADDED: minimal health messages (no prompt changes, no extra imports) */
+function buildHealthPromsFromAnalyzed(analyzed) {
+  const num = (v) => (Number.isFinite(+v) ? +v : null);
+  const sodium = num(analyzed?.sodium_mg);
+  const fat = num(analyzed?.fat_g);
+  const carbs = num(analyzed?.carbs_g);
+  const sugar = num(analyzed?.sugar_g);
+  const fiber = num(analyzed?.fiber_g);
+  const protein = num(analyzed?.protein_g);
+
+  const lines = [];
+
+  // Kidney / sodium
+  let kidney = "Kidney: ";
+  if (sodium != null) {
+    const pct = Math.round((sodium / 2000) * 100);
+    kidney += `${sodium} mg sodium (~${pct}% of 2000 mg/day).`;
+    if (sodium >= 600) kidney += " That’s high for one serving.";
+  } else {
+    kidney += "sodium not visible on label.";
+  }
+  lines.push(`💧 ${kidney}`);
+
+  // Heart / fat (simple heuristic)
+  let heart = "Heart: ";
+  if (fat != null) {
+    heart += `fat ${fat} g`;
+    heart += fat >= 17 ? " — on the higher side; keep other meals lighter." : " — reasonable.";
+  } else {
+    heart += "fat not visible on label.";
+  }
+  lines.push(`❤️ ${heart}`);
+
+  // Diabetes / carbs-sugar-fiber
+  let diabetes = "Diabetes: ";
+  const flags = [];
+  if (carbs != null && carbs >= 45) flags.push(`carbs ${carbs} g`);
+  if (sugar != null && sugar >= 15) flags.push(`sugars ${sugar} g`);
+  if (fiber != null && fiber < 4) flags.push(`low fiber (${fiber} g)`);
+  if (flags.length) {
+    diabetes += flags.join(", ") + " — pair with lean protein/veg or reduce the portion.";
+  } else {
+    diabetes += "no major flags detected for this serving.";
+  }
+  lines.push(`💉 ${diabetes}`);
+
+  const text = `Personalized flags\n• ${lines.join("\n• ")}`;
+
+  return {
+    text,
+    parts: {
+      kidney: `💧 ${kidney}`,
+      heart: `❤️ ${heart}`,
+      diabetes: `💉 ${diabetes}`,
+    },
+    numbers: {
+      sodium_mg: sodium,
+      carbs_g: carbs,
+      fat_g: fat,
+      fiber_g: fiber,
+      sugar_g: sugar,
+      protein_g: protein,
+    },
+  };
+}
 /* ---------------- Camera overlay ---------------- */
 function LabelFrameOverlay() {
   return (
@@ -647,7 +814,7 @@ function LabelFrameOverlay() {
           <View style={[styles.corner, styles.cTR]} />
           <View style={[styles.corner, styles.cBL]} />
           <View style={[styles.corner, styles.cBR]} />
-          <Text style={styles.frameText}>Align FOOD LABEL inside the frame</Text>
+
         </View>
         <View style={styles.maskSide} />
       </View>
@@ -664,17 +831,35 @@ export default forwardRef(function FoodLabelCamera(
   const userId = getAuth().currentUser?.uid;
   const { register, present, isS2Open, isS3Open } = useSheets();
 
+
+    const {
+      currentItemId,
+      setCurrentItemId,
+      currentItem,
+      setCurrentItem,
+    } = useCurrentScannedItemId();
+
+
   const OPENAI_API_KEY_FALLBACK =
     "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";
   const EFFECTIVE_OPENAI_KEY = openAiApiKey || OPENAI_API_KEY_FALLBACK;
 
+  const shouldShowCamera = isS2Open && isActive && !isS3Open;
+
+  function localDateId(d = new Date()) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;           // e.g. "2025-09-03"
+  }
 
   const {
     setImageUrl, setCloudUrl, setResult, setRaw, addLog, resetScan,
     setTitle, setCalories, setProtein, setFat, setSugar, setCarbs,
     setFiber, setSodium, setHealthScore, setAlternatives, setList,
     markScannedNow, formatScannedAt, setIngredientsBreakdown, setPartial,
-   scanBusy, beginScan, endScan,
+    setHint,                       // 👈 new (optional)
+    scanBusy, beginScan, endScan,
   } = useScanResults();
 
   // register Food Label page
@@ -706,19 +891,22 @@ export default forwardRef(function FoodLabelCamera(
           return;
         }
 
-         resetScan();
-        beginScan();               // 🔴 global: show loader on next page
         resetScan();
-       // setLocalLoading(true);
+        beginScan();               // 🔴 global loader
+        resetScan();
         setLoading(true);
         log("[LABEL] scan started");
 
-        await new Promise((r) => setTimeout(r, 900));
+        await new Promise((r) => setTimeout(r, 300));
 
+       // FAST CAPTURE: no delay + lighter options (keeps OCR quality)
         const pic = await cameraRef.current.takePictureAsync({
-          quality: 1,
-          skipProcessing: false,
+          quality: 0.55,      // ~55% is plenty for label OCR, much faster
+          skipProcessing: true, // iOS: skips heavy postprocessing
+          exif: false,
+          base64: false,
         });
+
         if (!pic?.uri) {
           log("[ERR] No photo captured");
           Alert.alert("Scan failed", "No photo captured.");
@@ -760,10 +948,11 @@ export default forwardRef(function FoodLabelCamera(
         // OFF fallback if numbers still missing
         label = await fillFromOFFIfMissing(label, log);
 
-        // partial for UI
+        // partial for UI (+ HINT)
         const partialPayload = buildPartialFromLabel({ label, imageUrl: downloadUrl });
         setPartial?.(partialPayload);
-        log("[PARTIAL] set for UI:", partialPayload);
+        setHint?.(partialPayload.hint);
+        log("[PARTIAL] set for UI");
 
         // Map to context fields
         let analyzed = mapLabelToAnalyzed(label || {});
@@ -771,9 +960,8 @@ export default forwardRef(function FoodLabelCamera(
       } catch (e) {
         log("[ERR] flow:", e?.message || String(e));
         Alert.alert("Food label flow failed", e?.message || String(e));
-
       } finally {
-         endScan();                 // 🟢 tell S3 loader to finish
+        endScan();                 // 🟢 stop loader
         setLoading(false);
         log("[LABEL] scan finished");
       }
@@ -816,86 +1004,183 @@ export default forwardRef(function FoodLabelCamera(
     setSodium(Number.isFinite(+analyzed?.sodium_mg) ? +analyzed.sodium_mg : null);
     setHealthScore(0);
 
-    // 🔥 Product-only breakdown (no macros here) — uses LLM icon picker
-    const productRows = await buildProductOnlyBreakdown(analyzed, EFFECTIVE_OPENAI_KEY, mkLogger(null));
-    setIngredientsBreakdown?.(productRows);
-    mkLogger(null)(`[BREAKDOWN] productRows=${productRows?.length ?? 0}`);
+    // 🔥 Ingredient breakdown from label.ingredients → ingredients_full with kcal reconciliation
+    const ingredientNames = (analyzed?.ingredients_text || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
 
-    // ---- Lower-calorie alternatives (optional; safe guard)
-    let alts = [];
-    try {
-      const basePerServing =
-        Number.isFinite(+analyzed?.calories_kcal_per_serving)
-          ? +analyzed.calories_kcal_per_serving
-          : (Number.isFinite(+analyzed?.calories_kcal_total) && Number.isFinite(+analyzed?.servings_per_package) && +analyzed.servings_per_package > 0)
-            ? Math.round(+analyzed.calories_kcal_total / +analyzed.servings_per_package)
-            : null;
-
-      if (typeof fetchAlternativesLLM === "function") {
-        alts = await fetchAlternativesLLM({
-          title: analyzed.title,
-          category: analyzed.category,
-          baseKcal: basePerServing,
-          apiKey: EFFECTIVE_OPENAI_KEY,
-          log: mkLogger(null),
-        });
-      }
-    } catch (e) {
-      mkLogger(null)("[ALTS] skipped:", e?.message || String(e));
-    }
-    setAlternatives?.(alts);
-
-    // items/card list
-    const items = Array.isArray(analyzed?.items) ? analyzed.items : [];
-    const itemsSafe = items.map((it) => ({
-      name: toStr(it?.name, "Item"),
-      subtitle: toStr(it?.subtitle, ""),
-      calories_kcal: toNum(it?.calories_kcal, 0),
-      icon: safeIconName(it?.icon),
+    let ingredientsFull = ingredientNames.map((name, i) => ({
+      index: i + 1,
+      name,
+      estimated_grams: null,
+      kcal_per_100g: null,
+      estimated_kcal: null,
+      assumed: true,
     }));
-    if (!itemsSafe.length) {
-      itemsSafe.push({
-        name: titleSafe || "Unknown product",
-        subtitle: analyzed?.size || "",
-        calories_kcal: Number.isFinite(perServingKcal) ? perServingKcal : (Number.isFinite(totalKcal) ? totalKcal : 0),
-        icon: "Utensils",
-      });
-    }
-    setList?.(itemsSafe);
 
-    // Firestore (non-blocking)
+    const reconciledIngredients = reconcileIngredientsToTotal(
+      ingredientsFull,
+      Number.isFinite(totalKcal) ? totalKcal : (Number.isFinite(perServingKcal) ? perServingKcal : 0)
+    );
+
+    // Build ingredient cards for UI
+    const ingredientCards = reconciledIngredients.map((ing) => ({
+      label: ing.name,
+      amt: Number.isFinite(ing.estimated_kcal) ? `+${ing.estimated_kcal} cal` : "+0 cal",
+      icon: "Utensils",
+      IconCOlor: "#1E67FF",
+      iconColorBg: "#EEF3FF",
+      color: "#FFFFFF",
+    }));
+
+    // keep product row too (if your page shows that)
+    const productRows = await buildProductOnlyBreakdown(analyzed, EFFECTIVE_OPENAI_KEY, mkLogger(null));
+    setIngredientsBreakdown?.(ingredientCards);  // prefer per-ingredient view
+    setList?.(ingredientCards);                  // list on the page = ingredients
+
+    // ---- Detailed alternatives (brand-aware + buckets)
+    let baseKcalForBucket = Number.isFinite(totalKcal)
+      ? totalKcal
+      : (Number.isFinite(perServingKcal) && Number.isFinite(+analyzed?.servings_per_package) && +analyzed.servings_per_package > 0)
+        ? Math.round(perServingKcal * +analyzed.servings_per_package)
+        : null;
+
+    let detailed = await fetchAlternativesDetailed({
+      title: analyzed.title,
+      brand: analyzed.brand,
+      kcal: baseKcalForBucket,
+      apiKey: EFFECTIVE_OPENAI_KEY,
+      log: mkLogger(null),
+    });
+
+    let rawAlts = Array.isArray(detailed?.alternatives) ? detailed.alternatives : [];
+
+    // Normalize + bucket
+    const sameBrand = [];
+    const otherBrands = [];
+    for (const a of rawAlts) {
+      const brand = toStr(a?.brand, "");
+      const name = toStr(a?.name, "");
+      const variant = toStr(a?.flavor_or_variant || "", "");
+      const kcal = toNum(a?.calories_per_package_kcal, NaN);
+      const bucket = normalizeBucket(a?.bucket) ?? deriveBucket(kcal, baseKcalForBucket);
+      const normalized = {
+        brand: brand || null,
+        name,
+        flavor_or_variant: variant || null,
+        calories_per_package_kcal: Number.isFinite(kcal) ? Math.round(kcal) : null,
+        bucket,
+      };
+      if (analyzed.brand && norm(brand) === norm(analyzed.brand)) sameBrand.push(normalized);
+      else otherBrands.push(normalized);
+    }
+    const ALL_ALTS = [...sameBrand, ...otherBrands];
+
+    const lessAlts = ALL_ALTS.filter((a) => a.bucket === "lower").slice(0, 5);
+    const simAlts  = ALL_ALTS.filter((a) => a.bucket === "similar").slice(0, 2);
+    const moreAlts = ALL_ALTS.filter((a) => a.bucket === "higher").slice(0, 5);
+    const toCard = (p) => ({
+      label: [p.brand, p.name, p.flavor_or_variant].filter(Boolean).join(" "),
+      amt: Number.isFinite(p.calories_per_package_kcal) ? `${p.calories_per_package_kcal}cal` : "—",
+      moreOrLess: p.bucket === "lower" ? "less" : p.bucket === "higher" ? "more" : "similar",
+    });
+    const alternatives_flat = [...lessAlts, ...simAlts, ...moreAlts].map(toCard);
+
+    // Keep your simple alts prop too (UI compatibility)
+    setAlternatives?.(alternatives_flat);
+
+    /* ✅ ADDED: compute health messages now that macros are known */
+    const proms = buildHealthPromsFromAnalyzed(analyzed);
+
+    // Firestore payload shared across collections
+    const payload = {
+      barcode: toStr(analyzed?.barcode, ""),
+      title: titleSafe,
+      brand: toStr(analyzed?.brand, "") || null,
+      category: toStr(analyzed?.category, "") || null,
+
+      calories_kcal_total: Number.isFinite(totalKcal) ? totalKcal : null,
+      calories_kcal_per_serving: Number.isFinite(perServingKcal) ? perServingKcal : null,
+
+      protein_g: Number.isFinite(+analyzed?.protein_g) ? +analyzed.protein_g : null,
+      fat_g: Number.isFinite(+analyzed?.fat_g) ? +analyzed.fat_g : null,
+      sugar_g: Number.isFinite(+analyzed?.sugar_g) ? +analyzed.sugar_g : null,
+      carbs_g: Number.isFinite(+analyzed?.carbs_g) ? +analyzed.carbs_g : null,
+      fiber_g: Number.isFinite(+analyzed?.fiber_g) ? +analyzed.fiber_g : null,
+      sodium_mg: Number.isFinite(+analyzed?.sodium_mg) ? +analyzed.sodium_mg : null,
+      sat_fat_g: Number.isFinite(+analyzed?.sat_fat_g) ? +analyzed.sat_fat_g : null,
+      calcium_mg: Number.isFinite(+analyzed?.calcium_mg) ? +analyzed.calcium_mg : null,
+
+      servings_per_package: Number.isFinite(+analyzed?.servings_per_package) ? +analyzed.servings_per_package : null,
+      serving_size_g: Number.isFinite(+analyzed?.serving_size_g) ? +analyzed.serving_size_g : null,
+      health_score: 0,
+
+      ingredients_text: analyzed?.ingredients_text || "",
+      ingredients_full: reconciledIngredients,
+      ingredients_kcal_list: reconciledIngredients.map((r) => ({ name: r.name, kcal: Number(r.estimated_kcal) || 0 })),
+      ingredients_kcal_map: Object.fromEntries(reconciledIngredients.map((r) => [norm(r.name), Number(r.estimated_kcal) || 0])),
+
+      alternatives: {
+        base_brand: toStr(analyzed?.brand, "") || null,
+        same_brand: sameBrand,
+        other_brands: otherBrands,
+        summary_by_bucket: {
+          lower: lessAlts.length,
+          similar: simAlts.length,
+          higher: moreAlts.length,
+          total: ALL_ALTS.length,
+        },
+      },
+      alternatives_flat,
+
+      items: productRows, // keep the product card list if your UI uses it
+
+      // ✅ ADDED: save the health messages
+      proms,
+
+      image_local_uri: pic?.uri || null,
+      image_cloud_url: downloadUrl || null,
+      scanned_at_pretty: formatScannedAt?.() || null,
+      created_at: serverTimestamp(),
+
+      raw: JSON.stringify(analyzed),
+      result: analyzed,
+    };
+
+    // Save to RecentlyEaten
     try {
       const db = getFirestore();
       const colRef = collection(db, "users", userId || "anon", "RecentlyEaten");
-      await addDoc(colRef, {
-        barcode: toStr(analyzed?.barcode, ""),
-        title: titleSafe,
-        calories_kcal_total: Number.isFinite(totalKcal) ? totalKcal : null,
-        calories_kcal_per_serving: Number.isFinite(perServingKcal) ? perServingKcal : null,
-        protein_g: Number.isFinite(+analyzed?.protein_g) ? +analyzed.protein_g : null,
-        fat_g: Number.isFinite(+analyzed?.fat_g) ? +analyzed.fat_g : null,
-        sugar_g: Number.isFinite(+analyzed?.sugar_g) ? +analyzed.sugar_g : null,
-        carbs_g: Number.isFinite(+analyzed?.carbs_g) ? +analyzed.carbs_g : null,
-        fiber_g: Number.isFinite(+analyzed?.fiber_g) ? +analyzed.fiber_g : null,
-        sodium_mg: Number.isFinite(+analyzed?.sodium_mg) ? +analyzed.sodium_mg : null,
-        sat_fat_g: Number.isFinite(+analyzed?.sat_fat_g) ? +analyzed.sat_fat_g : null,
-        calcium_mg: Number.isFinite(+analyzed?.calcium_mg) ? +analyzed.calcium_mg : null,
-        servings_per_package: Number.isFinite(+analyzed?.servings_per_package) ? +analyzed.servings_per_package : null,
-        serving_size_g: Number.isFinite(+analyzed?.serving_size_g) ? +analyzed.serving_size_g : null,
-        health_score: 0,
-        items: itemsSafe,
-        alternatives: alts,
-        image_local_uri: pic?.uri || null,
-        image_cloud_url: downloadUrl || null,
-        scanned_at_pretty: formatScannedAt?.() || null,
-        created_at: serverTimestamp(),
-        raw: JSON.stringify(analyzed),
-        result: analyzed,
-      });
-      mkLogger(null)("[LABEL] saved to Firestore");
+      await addDoc(colRef, payload);
+      mkLogger(null)("[LABEL] saved to Firestore: RecentlyEaten");
     } catch (err) {
-      mkLogger(null)(`[ERR] Firestore save: ${err?.message || err}`);
+      mkLogger(null)(`[ERR] Firestore save RecentlyEaten: ${err?.message || err}`);
     }
+
+    // Save to Today/{dateId}/List
+    try {
+      const db = getFirestore();
+      const dateId = localDateId();
+      const colRef = collection(db, "users", userId || "anon", "Today", dateId, "List");
+      const docRef = await addDoc(colRef, payload);
+        setCurrentItemId(docRef.id);
+            setCurrentItem(payload);
+      mkLogger(null)(`[LABEL] saved to Firestore: Today/${dateId}/List`);
+    } catch (err) {
+      mkLogger(null)(`[ERR] Firestore save Today/List: ${err?.message || err}`);
+    }
+
+    // Save to AllTimeLineScan
+    try {
+      const db = getFirestore();
+      const colRef = collection(db, "users", userId || "anon", "AllTimeLineScan");
+      await addDoc(colRef, payload);
+      mkLogger(null)("[LABEL] saved to Firestore: AllTimeLineScan");
+    } catch (err) {
+      mkLogger(null)(`[ERR] Firestore save AllTimeLineScan: ${err?.message || err}`);
+    }
+
 
     console.log("[SCANNED FOOD LABEL]", analyzed?.brand, analyzed?.title);
   };
@@ -917,22 +1202,24 @@ export default forwardRef(function FoodLabelCamera(
   return (
     <View style={{ height: "100%", width: "100%" }}>
       <View style={{ height: height(100), width: width(100), backgroundColor: "#000" }}>
-        {isS2Open && isActive && !isS3Open ? (
-          <View style={{ height: "100%", width: "100%" }}>
+        {shouldShowCamera ? (
+          <View
+            style={{ height: "100%", width: "100%" }}
+            pointerEvents={inCarousel ? "none" : "auto"}
+          >
             <CameraView
               ref={cameraRef}
               style={{ height: "100%", width: "100%" }}
               facing="back"
               flash="off"
               autofocus="on"
-              onCameraReady={() => mkLogger(null)("Camera ready")}
+              onCameraReady={() => addLog("Camera ready")}
             />
-            {/* 🔲 Food Label frame overlay */}
             <LabelFrameOverlay />
           </View>
         ) : null}
 
-        {loading && (
+        {(loading || scanBusy) && (
           <View style={styles.loadingOverlay} pointerEvents="none">
             <ActivityIndicator size="large" color="#fff" />
             <Text style={{ color: "#fff", marginTop: 12, fontWeight: "700" }}>
@@ -945,8 +1232,18 @@ export default forwardRef(function FoodLabelCamera(
   );
 });
 
+
+
+
 const FRAME_RATIO = 0.7;
 const FRAME_HEIGHT_RATIO = 0.45;
+
+// push the frame up by a % of screen height (try 0.06–0.10)
+const FRAME_SHIFT_UP = 0.08;
+
+const BASE_MASK = height(100) * ((1 - FRAME_HEIGHT_RATIO) / 2);
+const MASK_TOP_H = Math.max(0, BASE_MASK - height(100) * FRAME_SHIFT_UP);
+const MASK_BOTTOM_H = BASE_MASK + height(100) * FRAME_SHIFT_UP;
 
 const styles = StyleSheet.create({
   fill: { flex: 1, backgroundColor: "#000" },
@@ -969,17 +1266,19 @@ const styles = StyleSheet.create({
   },
 
   // --- frame mask ---
+
+
   middleRow: {
     flexDirection: "row",
     alignItems: "center",
     height: height(100) * FRAME_HEIGHT_RATIO,
   },
   maskTop: {
-    height: height(100) * ((1 - FRAME_HEIGHT_RATIO) / 2),
+    height: MASK_TOP_H,                  // ⬅️ use computed value
     backgroundColor: "rgba(0,0,0,0.45)",
   },
   maskBottom: {
-    height: height(100) * ((1 - FRAME_HEIGHT_RATIO) / 2),
+    height: MASK_BOTTOM_H,               // ⬅️ use computed value
     backgroundColor: "rgba(0,0,0,0.45)",
   },
   maskSide: {
@@ -997,6 +1296,10 @@ const styles = StyleSheet.create({
     justifyContent: "flex-end",
     alignItems: "center",
   },
+
+
+
+  
   frameText: {
     color: "#fff",
     fontWeight: "700",

@@ -2,7 +2,7 @@
 import { useScanResults } from "@/app/Context/ScanResultsContext";
 import { useSheets } from "@/app/Context/SheetsContext";
 import { CameraView, useCameraPermissions } from "expo-camera";
-import React, {
+import {
   forwardRef,
   useEffect,
   useImperativeHandle,
@@ -20,172 +20,634 @@ import {
 import { height, width } from "react-native-responsive-sizes";
 import PageAfterScan from "../PageAfterScan/PageAfterScan_Scan_Food/PageAfterScan_Scan_Food";
 
-// ✅ RN Firebase Storage (native API)
-import storage from "@react-native-firebase/storage";
-
-// ✅ Firestore (v22 modular API) — added for saving results
+import { useCurrentScannedItemId } from "@/app/Context/CurrentScannedItemIdContext";
 import { getAuth } from "@react-native-firebase/auth";
 import {
   addDoc,
   collection,
+  doc,
+  getDoc,
   getFirestore,
-  serverTimestamp
+  serverTimestamp,
 } from "@react-native-firebase/firestore";
+import storage from "@react-native-firebase/storage";
 
-/* ----------------- helpers ----------------- */
-function toNum(n, d = 0) {
+/* ----------------- tiny utils ----------------- */
+const toNum = (n, d = 0) => {
   const v = typeof n === "string" ? Number(n) : n;
   return Number.isFinite(v) ? v : d;
-}
-function toStr(s, d = "Scanned meal") {
-  return typeof s === "string" && s.trim().length ? s.trim() : d;
-}
+};
+const toStr = (s, d = "Scanned meal") =>
+  typeof s === "string" && s.trim().length ? s.trim() : d;
+const norm = (s = "") => String(s).trim().toLowerCase();
 
-// 🔎 a small known-safe list of Lucide icon names we’ll accept from the model
-const LUCIDE_SAFE = new Set([
-  "Utensils",
-  "Apple",
-  "Banana",
-  "Bread",
-  "Cheese",
-  "Cookie",
-  "Candy",
-  "Coffee",
-  "Egg",
-  "Fish",
-  "Milk",
-  "Pizza",
-  "Sandwich",
-  "Salad",
-  "Carrot",
-  "Drumstick",
-  "CupSoda",
-  "Avocado",
-  "IceCream",
-]);
-
-function safeIconName(s) {
-  const name = typeof s === "string" ? s.trim() : "";
-  return LUCIDE_SAFE.has(name) ? name : "Utensils";
-}
-
-// Approx kcal per medium whole fruit (or common portion)
-const FRUIT_KCAL = {
-  apple: 95,
-  banana: 105,
-  mango: 200,
-  orange: 62,
-  peach: 58,
-  pear: 101,
-  strawberries: 53,
-  watermelon: 46,
+/* ----------------- kcal reconciliation ----------------- */
+const categoryOf = (name = "") => {
+  const n = String(name).toLowerCase();
+  if (n.includes("salt") || n.includes("sodium")) return "salt";
+  if (
+    n.includes("cracker") ||
+    n.includes("noodle") ||
+    n.includes("wheat") ||
+    n.includes("ramen") ||
+    n.includes("pasta") ||
+    n.includes("bread")
+  )
+    return "noodle";
+  if (
+    n.includes("season") ||
+    n.includes("powder") ||
+    n.includes("sauce") ||
+    n.includes("flavor")
+  )
+    return "seasoning";
+  if (
+    n.includes("veg") ||
+    n.includes("cabbage") ||
+    n.includes("kimchi") ||
+    n.includes("onion") ||
+    n.includes("garlic") ||
+    n.includes("scallion")
+  )
+    return "veg";
+  return "other";
 };
 
-function pickBaseFruitFromTitle(title = "") {
-  const t = title.toLowerCase();
-  const keys = Object.keys(FRUIT_KCAL);
-  for (const k of keys) {
-    if (t.includes(k)) return k;
+const reconcileIngredientsToTotal = (rows, targetKcal) => {
+  const baseRows = rows.map((r) => {
+    const cat = categoryOf(r.name);
+    const base =
+      cat === "salt"
+        ? 0
+        : Number.isFinite(r?.estimated_kcal)
+        ? Number(r.estimated_kcal)
+        : Number.isFinite(r?.estimated_grams) &&
+          Number.isFinite(r?.kcal_per_100g)
+        ? (Number(r.estimated_grams) * Number(r.kcal_per_100g)) / 100
+        : 0;
+    return { ...r, _cat: cat, _base: Math.max(0, base) };
+  });
+
+  const target = Number(targetKcal);
+  if (!Number.isFinite(target) || target <= 0) {
+    return baseRows.map((r) => ({
+      ...r,
+      estimated_kcal: Math.max(0, Math.round(r._base)),
+    }));
   }
-  if (t.includes("fruit")) return "apple";
-  return null;
-}
 
-// Build alternatives list vs base fruit (ONLY less calories than scanned item)
-function fallbackAlternatives(title = "", totalKcal = 0) {
-  const base = pickBaseFruitFromTitle(title) || "apple";
-  const baseKcal = totalKcal || FRUIT_KCAL[base] || 95;
+  let baseSum = baseRows.reduce((s, r) => s + r._base, 0);
 
-  const candidates = [
-    "banana",
-    "mango",
-    "orange",
-    "peach",
-    "pear",
-    "strawberries",
-    "watermelon",
-    "apple",
-  ];
-
-  const seen = new Set();
-  const list = [];
-  for (const name of candidates) {
-    if (name === base) continue;
-    if (seen.has(name)) continue;
-    seen.add(name);
-    const kcal = FRUIT_KCAL[name];
-    if (!kcal) continue;
-    const pretty = name.charAt(0).toUpperCase() + name.slice(1);
-    const diff = Math.round(kcal - baseKcal);
-    if (diff < 0) {
-      list.push({ name: pretty, calories_diff: diff }); // negative = fewer
+  if (baseSum <= 0.0001) {
+    let shares = baseRows.map((r) => {
+      if (r._cat === "noodle") return 0.8;
+      if (r._cat === "seasoning") return 0.15;
+      if (r._cat === "veg") return 0.05;
+      return 0;
+    });
+    if (shares.every((v) => v === 0))
+      shares = baseRows.map(() => 1 / baseRows.length);
+    const totalShare = shares.reduce((a, b) => a + b, 0) || 1;
+    const raw = shares.map((s) => (s / totalShare) * target);
+    let out = raw.map((v) => Math.max(0, Math.round(v)));
+    let diff = target - out.reduce((a, b) => a + b, 0);
+    if (diff !== 0 && out.length) {
+      const idxs = baseRows
+        .map((r, i) => (r._cat === "noodle" ? i : -1))
+        .filter((i) => i >= 0);
+      const pool = idxs.length ? idxs : [out.length - 1];
+      if (diff > 0) for (let i = 0; i < diff; i++) out[pool[i % pool.length]] += 1;
+      else
+        for (let i = 0; i < -diff; i++)
+          out[pool[i % pool.length]] = Math.max(
+            0,
+            out[pool[i % pool.length]] - 1
+          );
     }
+    return baseRows.map((r, i) => ({ ...r, estimated_kcal: out[i] }));
   }
-  // sort by most similar (closest negative) first
-  list.sort((a, b) => Math.abs(a.calories_diff) - Math.abs(b.calories_diff));
-  return list.slice(0, 6);
+
+  const scale = target / baseSum;
+  let assigned = baseRows.map((r) => Math.max(0, Math.round(r._base * scale)));
+
+  const SEASONING_CAP = 120;
+  let excess = 0;
+  assigned = assigned.map((v, i) => {
+    if (baseRows[i]._cat === "seasoning" && v > SEASONING_CAP) {
+      excess += v - SEASONING_CAP;
+      return SEASONING_CAP;
+    }
+    return v;
+  });
+  if (excess > 0) {
+    const noodleIdxs = baseRows
+      .map((r, i) => (r._cat === "noodle" ? i : -1))
+      .filter((i) => i >= 0);
+    const pool = noodleIdxs.length ? noodleIdxs : [assigned.length - 1];
+    const per = Math.floor(excess / pool.length);
+    pool.forEach((i) => (assigned[i] += per));
+    let rem = excess - per * pool.length;
+    for (let k = 0; k < rem; k++) assigned[pool[k % pool.length]] += 1;
+  }
+
+  let sumNow = assigned.reduce((a, b) => a + b, 0);
+  let diff = target - sumNow;
+  if (diff !== 0 && assigned.length) {
+    const noodleIdxs = baseRows
+      .map((r, i) => (r._cat === "noodle" ? i : -1))
+      .filter((i) => i >= 0);
+    const pool = noodleIdxs.length ? noodleIdxs : [assigned.length - 1];
+    if (diff > 0) for (let i = 0; i < diff; i++) assigned[pool[i % pool.length]] += 1;
+    else
+      for (let i = 0; i < -diff; i++)
+        assigned[pool[i % pool.length]] = Math.max(
+          0,
+          assigned[pool[i % pool.length]] - 1
+        );
+  }
+
+  return baseRows.map((r, i) => ({ ...r, estimated_kcal: assigned[i] }));
+};
+
+/* ----------------------- HEALTH PROFILE + PROMS ---------------------------- */
+const fetchUserHealthProfile = async (uid, addLog) => {
+  try {
+    const db = getFirestore();
+    const snap = await getDoc(doc(db, "users", uid));
+    if (!snap.exists) return {};
+    const data = snap.data() || {};
+    const habitsContainer =
+      data.habits && typeof data.habits === "object" ? data.habits : {};
+    const habits = {
+      reduceCoffee:
+        typeof data.reduceCoffee === "boolean"
+          ? data.reduceCoffee
+          : typeof habitsContainer.reduceCoffee === "boolean"
+          ? habitsContainer.reduceCoffee
+          : false,
+      stopSmoking:
+        typeof data.stopSmoking === "boolean"
+          ? data.stopSmoking
+          : typeof habitsContainer.stopSmoking === "boolean"
+          ? habitsContainer.stopSmoking
+          : false,
+    };
+    addLog?.("[HEALTH] loaded settings");
+    return {
+      kidneySettings: data.kidneySettings || {},
+      heartSettings: data.heartSettings || {},
+      diabetesSettings: data.diabetesSettings || {},
+      habits,
+    };
+  } catch (e) {
+    addLog?.(`[HEALTH] load failed: ${e?.message || e}`);
+    return {};
+  }
+};
+
+const pct = (v, limit) =>
+  Number.isFinite(v) && Number.isFinite(limit) && limit > 0
+    ? Math.round((v / limit) * 100)
+    : null;
+
+const satFatCapFor = (level = "moderate") => {
+  const m = String(level || "moderate").toLowerCase();
+  if (m.startsWith("low")) return 10; // g/day
+  if (m.startsWith("high")) return 20;
+  return 13; // default
+};
+
+const looksCaffeinated = ({ title, ingredients_text, items }) => {
+  const hay = [
+    String(title || ""),
+    String(ingredients_text || ""),
+    ...(Array.isArray(items)
+      ? items.map((i) => `${i?.name || ""} ${i?.subtitle || ""}`)
+      : []),
+  ]
+    .join(" ")
+    .toLowerCase();
+  return /(coffee|espresso|latte|cappuccino|americano|mocha|cold\s*brew|energy\s*drink|caffeine|mate|yerba|guarana|cola|tea|matcha)/i.test(
+    hay
+  );
+};
+
+
+
+
+
+
+const buildHealthPrompts = ({ macros, profile, product }) => {
+  const lines = [];
+  const parts = {};
+
+  // Kidney
+  if (profile?.kidneySettings) {
+    const k = profile.kidneySettings;
+    const sodiumLimit = Number.isFinite(+k.sodiumLimitMg) ? +k.sodiumLimitMg : 2000;
+    const sodiumP = pct(macros.sodium_mg, sodiumLimit);
+    let kidney = `Kidney: `;
+    if (Number.isFinite(macros.sodium_mg)) {
+      kidney += `${macros.sodium_mg} mg sodium`;
+      if (sodiumP != null) kidney += ` (${sodiumP}% of your ${sodiumLimit} mg/day).`;
+      if (sodiumP != null && sodiumP >= 40)
+        kidney += ` Consider low-sodium options or less seasoning.`;
+    } else {
+      kidney += `sodium not visible on label.`;
+    }
+    if (k.proteinLevel && macros.protein_g != null) {
+      const pl = String(k.proteinLevel).toLowerCase();
+      if (pl.startsWith("low") && macros.protein_g > 25)
+        kidney += ` Protein ${macros.protein_g} g may be high for your low-protein target.`;
+    }
+    parts.kidney = kidney;      // ⟵ no emoji
+    lines.push(kidney);         // ⟵ no emoji
+  }
+
+  // Heart
+  if (profile?.heartSettings) {
+    const h = profile.heartSettings;
+    const cap = satFatCapFor(h.satFatLimit);
+    let heart = `Heart: `;
+    if (macros.fat_g != null) {
+      heart += `fat ${macros.fat_g} g`;
+      if (macros.fat_g >= 17) heart += ` — on the higher side; keep other meals lighter today.`;
+      else heart += ` — reasonable for most plans.`;
+      heart += ` Aim saturated fat ≈${cap} g/day (${h.satFatLimit || "moderate"}).`;
+    } else {
+      heart += `fat not visible on label.`;
+    }
+    parts.heart = heart;        // ⟵ no emoji
+    lines.push(heart);          // ⟵ no emoji
+  }
+
+  // Diabetes
+  if (profile?.diabetesSettings) {
+    let diabetes = `Diabetes: `;
+    const flags = [];
+    if (macros.carbs_g != null && macros.carbs_g >= 45) flags.push(`carbs ${macros.carbs_g} g`);
+    if (macros.sugar_g != null && macros.sugar_g >= 15) flags.push(`sugars ${macros.sugar_g} g`);
+    if (macros.fiber_g != null && macros.fiber_g < 4)   flags.push(`low fiber (${macros.fiber_g} g)`);
+    diabetes += flags.length
+      ? flags.join(", ") + ` — pair with lean protein/veg or halve the portion.`
+      : `no major flags detected for this serving.`;
+    parts.diabetes = diabetes;  // ⟵ no emoji
+    lines.push(diabetes);       // ⟵ no emoji
+  }
+
+  // Habits
+  const caffeinated = looksCaffeinated(product || {});
+  if (profile?.habits?.reduceCoffee) {
+    let coffee = `Coffee: you're cutting back. `;
+    coffee += caffeinated
+      ? `This looks caffeinated — try decaf or a smaller size today.`
+      : `Nice — this seems caffeine-free.`;
+    parts.reduceCoffee = coffee; // ⟵ no emoji
+    lines.push(coffee);
+  }
+  if (profile?.habits?.stopSmoking) {
+    let smoke = `Stop smoking: keep momentum. `;
+    smoke += caffeinated
+      ? `Coffee can be a trigger; swap with water or take a short walk after.`
+      : `Use meals as a cue to breathe deeply instead of lighting up.`;
+    parts.stopSmoking = smoke;   // ⟵ no emoji
+    lines.push(smoke);
+  }
+
+  const text =
+    lines.length
+      ? `Personalized flags\n• ${lines.join("\n• ")}`
+      : "Personalized flags: none detected for your current settings.";
+
+  return {
+    text,
+    parts,
+    numbers: {
+      sodium_mg: macros.sodium_mg ?? null,
+      carbs_g: macros.carbs_g ?? null,
+      fat_g: macros.fat_g ?? null,
+      fiber_g: macros.fiber_g ?? null,
+      sugar_g: macros.sugar_g ?? null,
+      protein_g: macros.protein_g ?? null,
+    },
+    profile_used: {
+      kidneySettings: profile?.kidneySettings || null,
+      heartSettings: profile?.heartSettings || null,
+      diabetesSettings: profile?.diabetesSettings || null,
+      habits: profile?.habits || null,
+    },
+  };
+};
+
+
+
+
+/* ----------------------- /HEALTH PROFILE + PROMS --------------------------- */
+
+/* ----------------------- MODEL CALLS --------------------------------------- */
+// OCR + nutrition + ingredients + alternatives
+const analyzeFoodUrl = async ({ imageUrl, apiKey }) => {
+
+const systemPrompt = `
+You are **Cal Diet AI — Visual Mode**. Identify foods from the image (any cuisine/language), estimate portions, and return STRICT JSON.
+
+What to do
+- Detect a short title (e.g., "Apple", "Rice crackers (chili)").
+- brand: "" if unknown.
+- Estimate portion size and provide calories_kcal_total for the whole visible serving/package.
+- Fill protein_g, fat_g, carbs_g, sugar_g, fiber_g, sodium_mg with typical values for this food.
+- Build ingredients_full in order of mass. Assign estimated_kcal per ingredient so the sum matches the total; salt = 0 kcal.
+- Provide an items array describing each component with a sensible icon (free text icon name; if unsure use "Utensils").
+- Always return 8–12 alternatives with calories_per_package_kcal and a bucket vs this product ("lower" ≤ −7%, "similar" within ±7%, "higher" ≥ +7%).
+- Also make sure when you see drinks like coffee to check if its with milk and sugar
+
+Container fill/empty detection — IMPORTANT
+- For cups, bowls, plates, bottles, boxes, bags, jars: determine if EMPTY, FULL, or PARTIAL and adjust portions and calories accordingly.
+- Use visual cues:
+  - Liquid level vs container height; meniscus/foam line; latte art/crema height.
+  - Transparency: visible bottom/sides ⇒ low fill; opaque band at mid-height ⇒ partial; up to rim ⇒ full.
+  - Residue/stains/crumbs ⇒ almost empty (≤10%).
+  - Package deformation: flat/air only ⇒ empty; bulging/structured contents ⇒ partial/full.
+- Encode fill in allowed fields (NO new keys):
+  - \`items[].subtitle\`: include fill estimate, e.g., "mug ~70% full (~350 ml mug ⇒ ~245 ml present)".
+  - \`ingredients_text\`: append concise note like "(~70% full)".
+  - Portion math: scale estimated_grams/ml in \`ingredients_full\` to the PRESENT amount only; \`calories_kcal_total\` must reflect the present contents (0 if empty).
+- Default vessel sizes when uncertain (override with clear cues):
+  - Demitasse 60–90 ml; small mug 200–250 ml; large mug 300–400 ml; takeout cup 350–500 ml; bowl 350–600 ml; plate serving 250–400 g.
+- Thresholds:
+  - EMPTY: ≤5% present ⇒ treat as 0 kcal, subtitle "empty".
+  - PARTIAL: 6–90% ⇒ estimate nearest 10% (e.g., 30%, 50%, 70%).
+  - FULL: ≥91% ⇒ "full" (100%).
+
+Coffee (milk + sugar) — IMPORTANT
+- When you see coffee (espresso, americano, latte, cappuccino, iced coffee, etc.), DO NOT assume 2–30 kcal.
+- Use visual cues to decide if milk and/or sugar are present:
+  - Color/opacity: tan/beige or foamy microfoam ⇒ milk present; near-black and transparent ⇒ likely black.
+  - Foam and latte art ⇒ steamed milk present.
+  - Sugar packets, crystals, syrups, stir sticks nearby ⇒ sugar likely added.
+  - Cup size: demitasse (~60–90 ml), small mug (~200–250 ml), large mug (~300–400 ml), takeout (~350–500 ml).
+- If uncertain, DEFAULT TO "coffee with milk and sugar" rather than black coffee:
+  - Small (~240 ml): assume 60 ml whole milk + 2 tsp sugar (≈8 g).
+  - Large (~350 ml): assume 90 ml whole milk + 3 tsp sugar (≈12 g).
+- Only treat as black coffee (≤5 kcal) if clearly near-black with no milk whiteness/foam and no sugar cues.
+- Compute calories/macros from ingredients and SCALE by fill level detected above:
+  - Brewed coffee: 0 kcal (0/0/0), sodium ~5 mg per 240 ml (use 0–10 mg).
+  - Whole milk (3–3.8% fat): ~61–64 kcal/100 ml; protein ~3.2 g/100 ml; fat ~3.5 g/100 ml; carbs/sugar ~4.8 g/100 ml.
+    - Very light color may imply semi-skim (≈46 kcal/100 ml) or skim (~34 kcal/100 ml).
+  - White sugar: ~387 kcal/100 g; 1 tsp ≈ 4 g.
+- Reflect these as separate entries in ingredients_full (brewed coffee, milk, sugar) with estimated_grams/ml and estimated_kcal that sum to the total.
+- The title should indicate additions if present (e.g., "Coffee (milk + sugar)").
+- Items entry should name the drink and per-cup calories; icon can be "Coffee".
+
+Output (NO extra keys, NO markdown)
+{
+  "title": "string",
+  "brand": "string",
+  "calories_kcal_total": number,
+  "protein_g": number,
+  "fat_g": number,
+  "sugar_g": number,
+  "carbs_g": number,
+  "fiber_g": number,
+  "sodium_mg": number,
+  "health_score": number,
+  "ingredients_full": [
+    { "index": number, "name": "string", "estimated_grams": number|null,
+      "kcal_per_100g": number|null, "estimated_kcal": number|null, "assumed": boolean }
+  ],
+  "ingredients_text": "string",
+  "items": [
+    { "name": "string", "subtitle": "string", "calories_kcal": number, "icon": "string" }
+  ],
+  "alternatives": [
+    { "brand": "string", "name": "string", "flavor_or_variant": "string",
+      "calories_per_package_kcal": number, "bucket": "lower|similar|higher" }
+  ]
 }
 
+Rules
+- JSON only. No markdown.
+- If unsure about an icon, use "Utensils".
+`.trim();
+
+
+  const body = {
+    model: "gpt-4o-mini",
+    response_format: { type: "json_object" },
+    temperature: 0.1,
+    messages: [
+      { role: "system", content: systemPrompt },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "Analyze this product and return strict JSON only." },
+          { type: "image_url", image_url: { url: imageUrl } },
+        ],
+      },
+    ],
+  };
+
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  const json = await res.json();
+  return JSON.parse(json?.choices?.[0]?.message?.content || "{}");
+};
+
+// Visual-only pass
+const analyzeVisualOnly = async ({ imageUrl, apiKey }) => {
+  const systemPrompt = `
+You are **Cal Diet AI — Visual Mode**. Ignore text. Identify foods visible in the photo.
+Return the SAME JSON shape as the OCR tool (estimates allowed). Prefer realistic portion sizes and macros.
+`.trim();
+
+  const body = {
+    model: "gpt-4o-mini",
+    response_format: { type: "json_object" },
+    temperature: 0.2,
+    messages: [
+      { role: "system", content: systemPrompt },
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: "Detect foods and estimate portions, macros, and total kcal. Return JSON only.",
+          },
+          { type: "image_url", image_url: { url: imageUrl } },
+        ],
+      },
+    ],
+  };
+
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  const json = await res.json();
+  return JSON.parse(json?.choices?.[0]?.message?.content || "{}");
+};
+
+// Ingredients-only OCR pass
+const analyzeIngredientsOnly = async ({ imageUrl, apiKey }) => {
+  const systemPrompt = `
+Extract ONLY the ingredient list from the photo. Read the largest block labeled
+"Ingredients/Zutaten/Ingredientes/…". Return strict JSON:
+
+{
+  "ingredients_text": "string",
+  "ingredients_full": [
+    { "index": number, "name": "string",
+      "estimated_grams": number|null, "kcal_per_100g": number|null,
+      "estimated_kcal": number|null, "assumed": boolean }
+  ]
+}
+
+Rules:
+- Order follows label order.
+- Expand parentheses (e.g., "wheat flour (wheat, malt)" -> "wheat flour","wheat","malt").
+- Use null for unknown numbers; include assumed=true when inferred.
+`.trim();
+
+  const body = {
+    model: "gpt-4o-mini",
+    response_format: { type: "json_object" },
+    temperature: 0.0,
+    messages: [
+      { role: "system", content: systemPrompt },
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: "Return ingredients_text + ingredients_full only. JSON strictly.",
+          },
+          { type: "image_url", image_url: { url: imageUrl } },
+        ],
+      },
+    ],
+  };
+
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  const json = await res.json();
+  return JSON.parse(json?.choices?.[0]?.message?.content || "{}");
+};
+
+// Fallback alternatives
+const fetchAlternativesFallback = async ({ title, brand, kcal, apiKey }) => {
+  const systemPrompt = `
+Generate 8–12 realistic alternatives (same brand first if known). Each must include per-package kcal and a bucket vs the base (±7% rule).
+Return strict JSON:
+{ "alternatives":[{ "brand":"string","name":"string","flavor_or_variant":"string","calories_per_package_kcal":number,"bucket":"lower|similar|higher"}] }
+`.trim();
+
+  const userMsg = `
+Base product:
+- title: ${title || "Unknown product"}
+- brand: ${brand || "(none)"}
+- kcal per package: ${
+    Number.isFinite(Number(kcal)) ? Number(kcal) : "(unknown)"
+  }
+Return JSON only.
+`.trim();
+
+  const body = {
+    model: "gpt-4o-mini",
+    response_format: { type: "json_object" },
+    temperature: 0.2,
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userMsg },
+    ],
+  };
+
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  const json = await res.json();
+  return JSON.parse(json?.choices?.[0]?.message?.content || "{}");
+};
+
+/* ----------------------- parse helpers ----------------------- */
+const parseIngredientsText = (txt = "") => {
+  const t = String(txt || "");
+  const cleaned = t
+    .replace(
+      /^\s*(ingredients?|zutaten|ingredientes|ingr[ée]dients|ingrediënten|ingredienti|inhaltsstoffe|içindekiler|malzemeler|состав|配料|成分|原材料|재료)\s*[:：\-–]\s*/i,
+      ""
+    )
+    .trim();
+  if (!cleaned) return [];
+  const rawTokens = cleaned
+    .split(/[,;•·・●]+/u)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const out = [];
+  rawTokens.forEach((tok) => {
+    const m = tok.match(/^(.*?)\((.*?)\)\s*$/);
+    if (m) {
+      const head = m[1].trim();
+      const inner = m[2]
+        .split(/[,;]+/g)
+        .map((x) => x.trim())
+        .filter(Boolean);
+      if (head) out.push(head);
+      inner.forEach((x) => out.push(x));
+    } else {
+      out.push(tok);
+    }
+  });
+  return out.map((name, i) => ({ index: i + 1, name }));
+};
+
+/* ----------------------- component ----------------------- */
 export default forwardRef(function Scan_Food_Camera(
-  {
-    inCarousel = false,
-    isActive = false,
-    onScanResult,
-    onScanList,
- 
-    openAiApiKey,
-  },
+  { inCarousel = false, isActive = false, onScanResult, onScanList, openAiApiKey },
   ref
 ) {
-
-
   const userId = getAuth().currentUser.uid;
-
-
   const { register, present, isS2Open, isS3Open } = useSheets();
 
   // ⚠️ Dev-only fallback; use a secure backend in production.
   const OPENAI_API_KEY_FALLBACK =
     "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";
-
   const EFFECTIVE_OPENAI_KEY = openAiApiKey || OPENAI_API_KEY_FALLBACK;
 
   const {
-    setImageUrl,
-    setCloudUrl,
-    setResult,
-    setRaw,
-    addLog,
-    resetScan,
-    setTitle,
-    setCalories,
-    setProtein,
-    setFat,
-    setSugar,
-    setCarbs,
-    setFiber,
-    setSodium,
-    setHealthScore,
-    setAlternatives,
-    setList,          // if your context has setList, we’ll fill it (optional)
-    markScannedNow,   // ✅ stamp the scan time in context
-    formatScannedAt,  // ✅ human-friendly formatter (e.g., “22. Mai 17:20 Uhr”)
-     scanBusy, beginScan, endScan,
+    setImageUrl, setCloudUrl, setResult, setRaw, addLog, resetScan,
+    setTitle, setCalories, setProtein, setFat, setSugar, setCarbs,
+    setFiber, setSodium, setHealthScore, setAlternatives, setList,
+    setProms,               // 👈 proms to UI
+    markScannedNow, formatScannedAt, scanBusy, beginScan, endScan,
   } = useScanResults();
 
+  const { setCurrentItemId, setCurrentItem } = useCurrentScannedItemId();
 
-
-
-  function localDateId(d = new Date()) {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;           // e.g. "2025-09-03"
-}
-
-
-
-  // Register s3 content once
   const didRegister = useRef(false);
   useEffect(() => {
     if (!register || didRegister.current) return;
@@ -197,14 +659,20 @@ export default forwardRef(function Scan_Food_Camera(
   const [permission, requestPermission] = useCameraPermissions();
   const [loading, setLoading] = useState(false);
 
+  const localDateId = (d = new Date()) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  };
+
   const takeFast = async () => {
     if (!cameraRef.current) return null;
     try {
-      const pic = await cameraRef.current.takePictureAsync({
+      return await cameraRef.current.takePictureAsync({
         quality: 0.85,
         skipProcessing: true,
       });
-      return pic;
     } catch (e) {
       addLog(`[ERR] takePictureAsync: ${e?.message || e}`);
       return null;
@@ -218,99 +686,27 @@ export default forwardRef(function Scan_Food_Camera(
     return await ref.getDownloadURL();
   };
 
-  // --- OpenAI analysis (forces all keys + icons for items) ---
-  const analyzeFoodUrl = async ({ imageUrl, apiKey }) => {
-    const systemPrompt = `
-You are Calorie AI. Detect the food(s) and estimate nutrition.
-
-Return STRICT JSON ONLY with ALL keys present (no prose). If unknown, use 0. Items represent the
-main components/ingredients of the meal. For each item, include a short "subtitle" (e.g., "1 bun",
-"with ketchup", "1 medium") and a Lucide icon name. If you are unsure about an icon, use "Utensils".
-
-Valid lucide icon names to prefer: ${Array.from(LUCIDE_SAFE).join(", ")}.
-
-{
-  "title": "string",
-  "calories_kcal_total": number,
-  "protein_g": number,
-  "fat_g": number,
-  "sugar_g": number,
-  "carbs_g": number,
-  "fiber_g": number,
-  "sodium_mg": number,
-  "health_score": number,
-  "items": [
-    {
-      "name": "string",
-      "subtitle": "string",
-      "calories_kcal": number,
-      "icon": "string"
-    }
-  ],
-  "alternatives": [
-    { "name": "string", "calories_diff": number }
-  ]
-}
-Rules:
-- Always include every key above.
-- "health_score" must be in 0..10.
-- Items should roughly sum near total calories (they can be approximate).
-`.trim();
-
-    const body = {
-      model: "gpt-4o-mini",
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: systemPrompt },
-        {
-          role: "user",
-          content: [
-            { type: "text", text: "Analyze this meal and return the JSON exactly as specified." },
-            { type: "image_url", image_url: { url: imageUrl } },
-          ],
-        },
-      ],
-      temperature: 0.2,
-    };
-
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    });
-
-    if (!res.ok) throw new Error(await res.text());
-    const json = await res.json();
-    const text = json?.choices?.[0]?.message?.content || "{}";
-    return JSON.parse(text);
-  };
-
   useImperativeHandle(ref, () => ({
     scan: async () => {
-      let _startedGlobal = false; // track beginScan/endScan pairing
+      let _startedGlobal = false;
       try {
         if (!isS2Open || !isActive || !cameraRef.current) {
           Alert.alert("Camera not ready", "Open the camera tab before scanning.");
           return;
         }
-
         if (!permission?.granted) {
           const req = await requestPermission();
           if (!req?.granted) return;
         }
-
         if (!EFFECTIVE_OPENAI_KEY || EFFECTIVE_OPENAI_KEY === "sk-REPLACE_ME") {
           Alert.alert("Missing OpenAI API key");
           return;
         }
 
         resetScan();
-        beginScan();            // 🔴 start global busy
+        beginScan();
+        resetScan();
         _startedGlobal = true;
-
         addLog("Scan started");
         setLoading(true);
 
@@ -321,18 +717,19 @@ Rules:
           return;
         }
 
-        // ✅ Set the image and stamp the scan time right away
         setImageUrl(pic.uri);
         markScannedNow();
         addLog(`Stamped scan time: ${formatScannedAt?.() || "now"}`);
-
         present?.("s3");
-        addLog("Preview shown (S3 opened)");
 
+        // Upload
         let downloadUrl = null;
         try {
           addLog("Uploading to Firebase…");
-          downloadUrl = await uploadImageToStorage({ fileUri: pic.uri, uid: userId });
+          downloadUrl = await uploadImageToStorage({
+            fileUri: pic.uri,
+            uid: userId,
+          });
           setCloudUrl(downloadUrl);
           addLog("Upload done");
         } catch (e) {
@@ -341,167 +738,366 @@ Rules:
           return;
         }
 
+        // Load health profile + habits
+        const profile = await fetchUserHealthProfile(userId, addLog);
+
+        // Analyze
         try {
-          addLog("Analyzing with OpenAI…");
-          const analyzed = await analyzeFoodUrl({ imageUrl: downloadUrl, apiKey: EFFECTIVE_OPENAI_KEY });
+          addLog("Analyzing (OCR+nutrition) with OpenAI…");
+          const analyzed = await analyzeFoodUrl({
+            imageUrl: downloadUrl,
+            apiKey: EFFECTIVE_OPENAI_KEY,
+          });
 
           setResult(analyzed);
           setRaw(JSON.stringify(analyzed));
 
-          const titleSafe  = toStr(analyzed?.title, "Scanned meal");
-          const kcalSafe   = toNum(analyzed?.calories_kcal_total, null);
-          const protein    = toNum(analyzed?.protein_g, 0);
-          const fat        = toNum(analyzed?.fat_g, 0);
-          const sugar      = toNum(analyzed?.sugar_g, 0);
-          const carbs      = toNum(analyzed?.carbs_g, 0);
-          const fiber      = toNum(analyzed?.fiber_g, 0);
-          const sodium     = toNum(analyzed?.sodium_mg, 0);
-          let   health     = toNum(analyzed?.health_score, 0);
+          // Parse fields
+          let titleSafe = toStr(analyzed?.title);
+          let baseBrand = toStr(analyzed?.brand, "");
+          let kcalSafe = toNum(analyzed?.calories_kcal_total);
+          let protein = toNum(analyzed?.protein_g);
+          let fat = toNum(analyzed?.fat_g);
+          let sugar = toNum(analyzed?.sugar_g);
+          let carbs = toNum(analyzed?.carbs_g);
+          let fiber = toNum(analyzed?.fiber_g);
+          let sodium = toNum(analyzed?.sodium_mg);
+          let health = toNum(analyzed?.health_score);
           if (health < 0) health = 0;
           if (health > 10) health = 10;
 
-          setTitle(titleSafe);
-          setCalories(kcalSafe);
-          setProtein(protein);
-          setFat(fat);
-          setSugar(sugar);
-          setCarbs(carbs);
-          setFiber(fiber);
-          setSodium(sodium);
-          setHealthScore(health);
+          let items = Array.isArray(analyzed?.items) ? analyzed.items : [];
+          let ingredientsFull = Array.isArray(analyzed?.ingredients_full)
+            ? analyzed.ingredients_full
+            : [];
 
-          // ✅ normalize items with icons + push to context (and callback)
-          const items = Array.isArray(analyzed?.items) ? analyzed.items : [];
-          const itemsSafe = items.map((it) => ({
+          // If raw text exists, augment with parser
+          if (
+            (!ingredientsFull || ingredientsFull.length === 0) &&
+            analyzed?.ingredients_text
+          ) {
+            ingredientsFull = parseIngredientsText(analyzed.ingredients_text);
+          }
+
+          // Visual-only enrichment if needed
+          const needVisual =
+            (!titleSafe || titleSafe.toLowerCase() === "scanned meal") ||
+            !(kcalSafe > 0) ||
+            (items.length === 0 &&
+              (!ingredientsFull || ingredientsFull.length === 0));
+
+          if (needVisual) {
+            addLog("Analyzing (Visual-only) with OpenAI…");
+            try {
+              const visual = await analyzeVisualOnly({
+                imageUrl: downloadUrl,
+                apiKey: EFFECTIVE_OPENAI_KEY,
+              });
+              if (!titleSafe && visual?.title)
+                titleSafe = toStr(visual.title, "Scanned meal");
+              if (!baseBrand && typeof visual?.brand === "string")
+                baseBrand = toStr(visual.brand, "");
+              if (!(kcalSafe > 0) && toNum(visual?.calories_kcal_total, null) > 0) {
+                kcalSafe = toNum(visual.calories_kcal_total, null);
+              }
+              if ((!items || !items.length) && Array.isArray(visual?.items))
+                items = visual.items;
+
+              // Use visual macros if OCR zeros
+              protein ||= toNum(visual?.protein_g, 0);
+              fat ||= toNum(visual?.fat_g, 0);
+              carbs ||= toNum(visual?.carbs_g, 0);
+              sugar ||= toNum(visual?.sugar_g, 0);
+              fiber ||= toNum(visual?.fiber_g, 0);
+              sodium ||= toNum(visual?.sodium_mg, 0);
+
+              if (
+                (!ingredientsFull || !ingredientsFull.length) &&
+                Array.isArray(visual?.ingredients_full)
+              ) {
+                ingredientsFull = visual.ingredients_full;
+              }
+            } catch (e) {
+              addLog(`[Visual analyze failed] ${e?.message || e}`);
+            }
+          }
+
+          // Ingredients-only OCR if sparse
+          if (!ingredientsFull || ingredientsFull.length < 3) {
+            addLog("Ingredients sparse — running ingredients-only OCR…");
+            try {
+              const ingOnly = await analyzeIngredientsOnly({
+                imageUrl: downloadUrl,
+                apiKey: EFFECTIVE_OPENAI_KEY,
+              });
+              if (
+                Array.isArray(ingOnly?.ingredients_full) &&
+                ingOnly.ingredients_full.length > (ingredientsFull?.length || 0)
+              ) {
+                ingredientsFull = ingOnly.ingredients_full;
+              }
+              if (
+                ingOnly?.ingredients_text &&
+                (!analyzed?.ingredients_text ||
+                  ingOnly.ingredients_text.length >
+                    analyzed.ingredients_text.length)
+              ) {
+                analyzed.ingredients_text = ingOnly.ingredients_text;
+              }
+            } catch (e) {
+              addLog(`[Ingredients-only OCR failed] ${e?.message || e}`);
+            }
+          }
+
+          // Normalize ingredients & reconcile to total
+          ingredientsFull = (ingredientsFull || [])
+            .map((row, i) => {
+              const idx = toNum(row?.index, i + 1);
+              const name = toStr(row?.name, "");
+              const grams = Number.isFinite(toNum(row?.estimated_grams, NaN))
+                ? toNum(row?.estimated_grams, NaN)
+                : null;
+              const per100 = Number.isFinite(toNum(row?.kcal_per_100g, NaN))
+                ? toNum(row?.kcal_per_100g, NaN)
+                : null;
+              let kcal = Number.isFinite(toNum(row?.estimated_kcal, NaN))
+                ? toNum(row?.estimated_kcal, NaN)
+                : null;
+              if (kcal == null && Number.isFinite(grams) && Number.isFinite(per100)) {
+                kcal = Math.round((grams * per100) / 100);
+              }
+              const assumed = !!row?.assumed;
+              return {
+                index: idx,
+                name,
+                estimated_grams: Number.isFinite(grams) ? grams : null,
+                kcal_per_100g: Number.isFinite(per100) ? per100 : null,
+                estimated_kcal: Number.isFinite(kcal) ? Math.round(kcal) : null,
+                assumed,
+              };
+            })
+            .filter((r) => r.name.length > 0)
+            .sort((a, b) => a.index - b.index);
+
+          const reconciledIngredients = reconcileIngredientsToTotal(
+            ingredientsFull,
+            kcalSafe
+          );
+
+          // Ingredient cards (icons rely on model; fallback = "Utensils")
+          const ingredientCards = reconciledIngredients.map((ing) => ({
+            label: ing.name,
+            amt: Number.isFinite(ing.estimated_kcal)
+              ? `+${ing.estimated_kcal} cal`
+              : "+0 cal",
+            icon: "Utensils",
+            IconCOlor: "#1E67FF",
+            iconColorBg: "#EEF3FF",
+            color: "#FFFFFF",
+          }));
+          setList?.(ingredientCards);
+          onScanList?.(ingredientCards);
+
+          // Items normalize: accept model-provided icon, fallback "Utensils"
+          const itemsSafe = (items || []).map((it) => ({
             name: toStr(it?.name, "Item"),
             subtitle: toStr(it?.subtitle, ""),
             calories_kcal: toNum(it?.calories_kcal, 0),
-            icon: safeIconName(it?.icon),
+            icon:
+              it?.icon && String(it.icon).trim().length
+                ? String(it.icon).trim()
+                : "Utensils",
           }));
-          setList?.(itemsSafe);
-          onScanList?.(itemsSafe);
 
-          // ✅ Alternatives — only fewer calories than scanned item
-          const modelAlts = Array.isArray(analyzed?.alternatives) ? analyzed.alternatives : [];
-          const altsSafe = modelAlts
-            .map(a => ({ name: toStr(a?.name, ""), calories_diff: toNum(a?.calories_diff, 0) }))
-            .filter(a => a.name.length > 0 && a.calories_diff < 0);
-
-          const fallbacks = fallbackAlternatives(titleSafe, kcalSafe);
-
-          // merge + dedupe + sort by closest negative first
-          const byName = new Map();
-          [...altsSafe, ...fallbacks].forEach(a => {
-            if (a.calories_diff < 0) {
-              const key = a.name.toLowerCase();
-              if (!byName.has(key)) byName.set(key, a);
+          // Alternatives (fallback if needed)
+          let rawAlts = Array.isArray(analyzed?.alternatives)
+            ? analyzed.alternatives
+            : [];
+          if (!rawAlts || rawAlts.length < 6) {
+            try {
+              const altFallback = await fetchAlternativesFallback({
+                title: titleSafe || "Food",
+                brand: baseBrand || "",
+                kcal: kcalSafe || null,
+                apiKey: EFFECTIVE_OPENAI_KEY,
+              });
+              if (Array.isArray(altFallback?.alternatives))
+                rawAlts = rawAlts.concat(altFallback.alternatives);
+            } catch (e) {
+              addLog(`[Alts fallback failed] ${e?.message || e}`);
             }
-          });
-          const finalAlts = Array.from(byName.values())
-            .sort((a, b) => Math.abs(a.calories_diff) - Math.abs(b.calories_diff))
-            .slice(0, 6);
-
-          setAlternatives?.(finalAlts);
-
-          // ✅ SAVE TO FIRESTORE (stable ID if available)
-          try {
-            const db = getFirestore();
-            const colRef = collection(db, "users", userId, "RecentlyEaten");
-
-            // Prefer a stable document id based on markScannedNow() timestamp if your context exposes it.
-            // If your context stores the raw timestamp somewhere accessible, you can tap it here.
-            // Since we only have a pretty formatter, we’ll just use addDoc (auto-id).
-            addLog("Saving scan to Firestore…");
-
-            const payload = {
-              // nutrition
-              title: titleSafe,
-              calories_kcal_total: Number.isFinite(kcalSafe) ? kcalSafe : null,
-              protein_g: protein,
-              fat_g: fat,
-              sugar_g: sugar,
-              carbs_g: carbs,
-              fiber_g: fiber,
-              sodium_mg: sodium,
-              health_score: health,
-
-              // arrays
-              items: itemsSafe,
-              alternatives: finalAlts,
-
-              // media + time
-              image_local_uri: pic.uri || null,
-              image_cloud_url: downloadUrl || null,
-              scanned_at_pretty: formatScannedAt?.() || null,
-              created_at: serverTimestamp(),
-
-              // raw/model
-              raw: JSON.stringify(analyzed),
-              result: analyzed,
-            };
-
-            // If you later expose a stable timestamp (e.g., scannedAt), switch to setDoc(doc(colRef, String(scannedAt)), payload, { merge: true })
-            const docRef = await addDoc(colRef, payload);
-
-            addLog(`Saved scan to Firestore [id=${docRef.id}]`);
-          } catch (err) {
-            const msg = err?.message || String(err);
-            addLog(`[ERR] Firestore save: ${msg}`);
-            Alert.alert("Firestore save failed", msg);
           }
 
+          const normalizeBucket = (b) => {
+            const s = norm(b);
+            if (s.startsWith("low") || s === "less" || s === "lower") return "lower";
+            if (s.startsWith("high") || s === "more" || s === "higher") return "higher";
+            if (s.startsWith("sim") || s === "same") return "similar";
+            return null;
+          };
+          const deriveBucket = (altKcal, baseKcal) => {
+            const a = Number(altKcal),
+              b = Number(baseKcal);
+            if (!Number.isFinite(a) || !Number.isFinite(b) || b <= 0)
+              return "similar";
+            const diff = (a - b) / b;
+            if (diff <= -0.07) return "lower";
+            if (diff >= 0.07) return "higher";
+            return "similar";
+          };
 
+          const sameBrand = [];
+          const otherBrands = [];
+          for (const a of rawAlts) {
+            const brand = toStr(a?.brand, "");
+            const name = toStr(a?.name, "");
+            const variant = toStr(a?.flavor_or_variant || "", "");
+            const akcal = toNum(a?.calories_per_package_kcal, NaN);
+            const bucket = normalizeBucket(a?.bucket) ?? deriveBucket(akcal, kcalSafe);
+            const normalized = {
+              brand: brand || null,
+              name,
+              flavor_or_variant: variant || null,
+              calories_per_package_kcal: Number.isFinite(akcal) ? Math.round(akcal) : null,
+              bucket,
+            };
+            if (baseBrand && norm(brand) === norm(baseBrand)) sameBrand.push(normalized);
+            else otherBrands.push(normalized);
+          }
+          const ALL_ALTS = [...sameBrand, ...otherBrands];
 
+          const lessAlts = ALL_ALTS.filter((a) => a.bucket === "lower").slice(0, 5);
+          const simAlts = ALL_ALTS.filter((a) => a.bucket === "similar").slice(0, 2);
+          const moreAlts = ALL_ALTS.filter((a) => a.bucket === "higher").slice(0, 5);
 
+          const toCard = (p) => ({
+            label: [p.brand, p.name, p.flavor_or_variant].filter(Boolean).join(" "),
+            amt: Number.isFinite(p.calories_per_package_kcal)
+              ? `${p.calories_per_package_kcal}cal`
+              : "—",
+            moreOrLess:
+              p.bucket === "lower" ? "less" : p.bucket === "higher" ? "more" : "similar",
+          });
+          const flatCards = [...lessAlts, ...simAlts, ...moreAlts].map(toCard);
+          setAlternatives?.(flatCards);
 
+          if (!titleSafe) titleSafe = "Scanned meal";
 
+          // UI summary
+          setTitle(titleSafe);
+          setCalories(Number.isFinite(kcalSafe) ? kcalSafe : null);
+          setProtein(Number.isFinite(protein) ? protein : null);
+          setFat(Number.isFinite(fat) ? fat : null);
+          setSugar(Number.isFinite(sugar) ? sugar : null);
+          setCarbs(Number.isFinite(carbs) ? carbs : null);
+          setFiber(Number.isFinite(fiber) ? fiber : null);
+          setSodium(Number.isFinite(sodium) ? sodium : null);
+          setHealthScore(Number.isFinite(health) ? health : null);
 
+          // Build & show proms
+          const proms = buildHealthPrompts({
+            macros: {
+              sodium_mg: sodium,
+              carbs_g: carbs,
+              fat_g: fat,
+              fiber_g: fiber,
+              sugar_g: sugar,
+              protein_g: protein,
+            },
+            profile,
+            product: {
+              title: titleSafe,
+              ingredients_text: analyzed?.ingredients_text || "",
+              items: itemsSafe,
+            },
+          });
+          setProms?.(proms);
 
-          try {
-            const db = getFirestore();
-            const dateId = localDateId();       // only day-month-year (local)
-
-            // ➜ users/{uid}/Today/{dateId}/RecentlyEaten/{autoId}
-            const colRef = collection(db, 'users', userId, 'Today', dateId, 'List');
-
-            const payload = {
+          // Firestore payload
+          const payload = {
             title: titleSafe,
+            brand: baseBrand || null,
             calories_kcal_total: Number.isFinite(kcalSafe) ? kcalSafe : null,
-            protein_g: protein,
-            fat_g: fat,
-            sugar_g: sugar,
-            carbs_g: carbs,
-            fiber_g: fiber,
-            sodium_mg: sodium,
-            health_score: health,
+            protein_g: Number.isFinite(protein) ? protein : null,
+            fat_g: Number.isFinite(fat) ? fat : null,
+            sugar_g: Number.isFinite(sugar) ? sugar : null,
+            carbs_g: Number.isFinite(carbs) ? carbs : null,
+            fiber_g: Number.isFinite(fiber) ? fiber : null,
+            sodium_mg: Number.isFinite(sodium) ? sodium : null,
+            health_score: Number.isFinite(health) ? health : null,
 
-            // arrays
             items: itemsSafe,
-            alternatives: finalAlts,
+            ingredients_full: reconciledIngredients,
+            ingredients_kcal_list: reconciledIngredients.map((r) => ({
+              name: r.name,
+              kcal: Number(r.estimated_kcal) || 0,
+            })),
+            ingredients_kcal_map: Object.fromEntries(
+              reconciledIngredients.map((r) => [norm(r.name), Number(r.estimated_kcal) || 0])
+            ),
 
-            // media + time
+            alternatives: {
+              base_brand: baseBrand || null,
+              same_brand: sameBrand,
+              other_brands: otherBrands,
+              summary_by_bucket: {
+                lower: lessAlts.length,
+                similar: simAlts.length,
+                higher: moreAlts.length,
+                total: ALL_ALTS.length,
+              },
+            },
+            alternatives_flat: flatCards,
+
+            proms, // 👈 saved with scan
+            profile_used: proms.profile_used || null,
+
             image_local_uri: pic.uri || null,
             image_cloud_url: downloadUrl || null,
             scanned_at_pretty: formatScannedAt?.() || null,
             created_at: serverTimestamp(),
 
-            // raw/model
             raw: JSON.stringify(analyzed),
             result: analyzed,
-            };
+          };
 
+          // Save 3 places
+          try {
+            const db = getFirestore();
+            const colRef = collection(db, "users", userId, "RecentlyEaten");
             const docRef = await addDoc(colRef, payload);
-            addLog(`Saved scan to Firestore at Today/${dateId} [id=${docRef.id}]`);
+            setCurrentItemId(docRef.id);
+            setCurrentItem(payload);
+            addLog(`Saved scan to Firestore [RecentlyEaten/${docRef.id}]`);
           } catch (err) {
-            const msg = err?.message || String(err);
-            addLog(`[ERR] Firestore save: ${msg}`);
-            Alert.alert('Firestore save failed', msg);
+            addLog(`[ERR] Firestore save (RecentlyEaten): ${err?.message || err}`);
           }
 
+          try {
+            const db = getFirestore();
+            const dateId = localDateId();
+            const colRef = collection(
+              db,
+              "users",
+              userId,
+              "Today",
+              dateId,
+              "List"
+            );
+            await addDoc(colRef, payload);
+            addLog(`Saved scan to Firestore [Today/${dateId}/List]`);
+          } catch (err) {
+            addLog(`[ERR] Firestore save (Today): ${err?.message || err}`);
+          }
 
-
-
-
+          try {
+            const db = getFirestore();
+            const colRef = collection(db, "users", userId, "AllTimeLineScan");
+            await addDoc(colRef, payload);
+            addLog(`Saved scan to Firestore [AllTimeLineScan]`);
+          } catch (err) {
+            addLog(`[ERR] Firestore save (AllTimeLineScan): ${err?.message || err}`);
+          }
 
           onScanResult?.(analyzed);
           addLog("Analysis done");
@@ -511,7 +1107,7 @@ Rules:
         }
       } finally {
         setLoading(false);
-        if (_startedGlobal) endScan(); // 🟢 end global busy
+        if (_startedGlobal) endScan();
         addLog("Scan finished");
       }
     },
@@ -521,9 +1117,10 @@ Rules:
   if (!permission.granted) {
     return (
       <View style={[styles.fill, styles.center]}>
-        <Text style={{ color: "#fff", marginBottom: 12 }}>We need your permission to use the camera</Text>
+        <Text style={{ color: "#fff", marginBottom: 12 }}>
+          We need your permission to use the camera
+        </Text>
         <TouchableOpacity style={styles.primaryBtn} onPress={requestPermission}>
-          <Text className="primaryText">Grant Permission</Text>
           <Text style={styles.primaryText}>Grant Permission</Text>
         </TouchableOpacity>
       </View>
@@ -532,19 +1129,22 @@ Rules:
 
   return (
     <View style={{ height: "100%", width: "100%" }}>
-      <View style={{ height: height(100), width: width(100), backgroundColor: "#000" }}>
-        {isS2Open && isActive && !isS3Open ? (
-          <View style={{ height: "100%", width: "100%" }} pointerEvents={inCarousel ? "none" : "auto"}>
-            <CameraView
-              ref={cameraRef}
-              style={{ height: "100%", width: "100%" }}
-              facing="back"
-              flash="off"
-              autofocus="on"
-              onCameraReady={() => addLog("Camera ready")}
-            />
-          </View>
-        ) : null}
+      <View
+        style={{ height: height(100), width: width(100), backgroundColor: "#000" }}
+      >
+        <View
+          style={{ height: "100%", width: "100%" }}
+          pointerEvents={inCarousel ? "none" : "auto"}
+        >
+          <CameraView
+            ref={cameraRef}
+            style={{ height: "100%", width: "100%" }}
+            facing="back"
+            flash="off"
+            autofocus="on"
+            onCameraReady={() => console.log("Camera ready")}
+          />
+        </View>
 
         {(loading || scanBusy) && (
           <View style={styles.loadingOverlay} pointerEvents="none">
@@ -571,7 +1171,10 @@ const styles = StyleSheet.create({
   primaryText: { color: "#fff", fontWeight: "800" },
   loadingOverlay: {
     position: "absolute",
-    top: 0, left: 0, right: 0, bottom: 0,
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "rgba(0,0,0,0.35)",

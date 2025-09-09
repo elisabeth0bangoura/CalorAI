@@ -1,10 +1,10 @@
 // app/index.tsx
 import { FirebaseAuthTypes, getAuth, onAuthStateChanged } from '@react-native-firebase/auth';
 import { Image } from 'expo-image';
-import { Href, useRouter } from 'expo-router';
+import { Href, usePathname, useRouter } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { height } from 'react-native-responsive-sizes';
 
@@ -22,7 +22,12 @@ function isAppleOrGoogle(user: FirebaseAuthTypes.User) {
 
 export default function Index() {
   const router = useRouter();
+  const pathname = usePathname();
   const [loading, setLoading] = useState(true);
+
+  // Prevent double replace + double hide in dev/StrictMode
+  const lastTargetRef = useRef<Dest | null>(null);
+  const splashHiddenRef = useRef(false);
 
   useEffect(() => {
     const auth = getAuth();
@@ -31,24 +36,28 @@ export default function Index() {
       let target: Dest = '/(auth)/AuthHome';
 
       if (user) {
-        // ensure providerData is populated after cold start
         try { await user.reload(); } catch {}
-        // console.log('providers:', user.providerData.map(p => p.providerId)); // handy debug
         if (isAppleOrGoogle(user)) {
           target = '/(tabs)'; // or '/(tabs)/home'
         }
       }
 
-      try {
+      // Navigate only if target changed and we're not already there
+      if (lastTargetRef.current !== target || pathname !== target) {
+        lastTargetRef.current = target;
         router.replace(target as Href);
-      } finally {
+      }
+
+      // Hide splash exactly once
+      if (!splashHiddenRef.current) {
+        splashHiddenRef.current = true;
         await SplashScreen.hideAsync();
         setLoading(false);
       }
     });
 
-    return unsub;
-  }, [router]);
+    return () => unsub();
+  }, [router, pathname]);
 
   if (loading) {
     return (
@@ -62,12 +71,7 @@ export default function Index() {
           />
           <Image
             source={require('../assets/Logo_App_white.png')}
-            style={{
-              height: 100,
-              bottom: height(6),
-              position: 'absolute',
-              width: 100,
-            }}
+            style={{ height: 100, bottom: height(6), position: 'absolute', width: 100 }}
             contentFit="contain"
           />
         </View>
@@ -80,7 +84,9 @@ export default function Index() {
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1, backgroundColor: '#fff',
-    justifyContent: 'center', alignItems: 'center',
+    flex: 1,
+    backgroundColor: '#fff',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });

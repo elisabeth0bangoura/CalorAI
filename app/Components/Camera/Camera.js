@@ -9,7 +9,7 @@ import {
 import { height, size } from "react-native-responsive-sizes";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { useCameraActive } from "@/app/Context/CameraActiveContext"; // ⬅️ NEW
+import { useCameraActive } from "@/app/Context/CameraActiveContext";
 import { useSheets } from "@/app/Context/SheetsContext";
 
 import BarcodeCamera from "./Cameras/BarcodeCamera";
@@ -23,9 +23,9 @@ const PADDING_FUDGE = 0;
 
 export default function CameraCarouselScroll() {
   const insets = useSafeAreaInsets();
-  const { isS3Open } = useSheets();
+  const { isS3Open, isS2Open } = useSheets();           // ← NEW: read isS2Open
 
-  const { setActiveKey } = useCameraActive(); // ⬅️ NEW
+  const { setActiveKey } = useCameraActive();
 
   const pagerRef = useRef(null);
   const labelsRef = useRef(null);
@@ -47,7 +47,6 @@ export default function CameraCarouselScroll() {
     []
   );
 
-  // ⬇️ set initial active camera once
   useEffect(() => {
     setActiveKey(PAGES[0]?.key);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -94,7 +93,6 @@ export default function CameraCarouselScroll() {
     const i = Math.round(e.nativeEvent.contentOffset.x / pageW);
     if (i !== index) setIndex(i);
     centerLabel(i, pageW);
-    // ⬇️ update active camera in context
     if (PAGES[i]?.key) setActiveKey(PAGES[i].key);
   };
 
@@ -109,7 +107,6 @@ export default function CameraCarouselScroll() {
     setIndex(i);
     pagerRef.current.scrollTo({ x: i * pageW, animated: true });
     centerLabel(i);
-    // ⬇️ update active camera in context
     if (PAGES[i]?.key) setActiveKey(PAGES[i].key);
   };
 
@@ -135,6 +132,14 @@ export default function CameraCarouselScroll() {
     }
   };
 
+  // Only mount the active page when S2 is open and S3 is closed
+  const shouldMount = (i) => isS2Open && !isS3Open && i === index;   // ← NEW: gated by isS2Open
+
+  // If S2 is closed, render an empty surface (no cameras mounted)
+  if (!isS2Open) {
+    return <View style={{ flex: 1, backgroundColor: "#000" }} onLayout={onLayout} />;
+  }
+
   return (
     <View style={{ flex: 1, backgroundColor: "#000" }} onLayout={onLayout}>
       {/* PAGER */}
@@ -156,17 +161,20 @@ export default function CameraCarouselScroll() {
       >
         {PAGES.map(({ key, Cmp }, i) => (
           <View key={key} style={{ width: pageW, height: "100%" }}>
-            {/* IMPORTANT: Cmp must be forwardRef to receive this ref */}
-            <Cmp ref={(r) => (pageRefs.current[i] = r)} inCarousel isActive={i === index} />
+            {shouldMount(i) ? (
+              <Cmp
+                ref={(r) => (pageRefs.current[i] = r)}
+                inCarousel
+                isActive
+              />
+            ) : null}
           </View>
         ))}
       </GHScrollView>
 
       {/* OVERLAY */}
       <View
-        style={[
-          styles.overlay,
-        ]}
+        style={[styles.overlay]}
         pointerEvents={isS3Open ? "none" : "box-none"}
       >
         {/* SHUTTER */}

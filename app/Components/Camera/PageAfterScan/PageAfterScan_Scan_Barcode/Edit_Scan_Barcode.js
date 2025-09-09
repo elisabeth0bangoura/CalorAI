@@ -20,10 +20,10 @@ import { useScanResults } from "@/app/Context/ScanResultsContext";
 import { useSheets } from "@/app/Context/SheetsContext";
 import LottieView from "lottie-react-native";
 
-// ✅ Current item id context (so Edit_Scan can know which doc to load)
+// ✅ Current item id context
 import { useCurrentScannedItemId } from "@/app/Context/CurrentScannedItemIdContext";
 
-// ✅ Firestore/Auth (v22 modular) for saving merged edits
+// ✅ Firestore/Auth
 import { getAuth } from "@react-native-firebase/auth";
 import { doc, getFirestore, serverTimestamp, setDoc } from "@react-native-firebase/firestore";
 
@@ -59,7 +59,17 @@ export default function Edit_Scan_FoodScan() {
   const { dismiss } = useSheets();
   const insets = useSafeAreaInsets();
 
-  const { currentItemId } = useCurrentScannedItemId();
+ 
+
+    const {
+       currentItemId, 
+          setCurrentItemId,
+          setCurrentItem,
+          currentItem, 
+           
+     } = useCurrentScannedItemId();
+
+
 
   // 🔐 current user id (safe fallback)
   const auth = getAuth();
@@ -83,7 +93,7 @@ export default function Edit_Scan_FoodScan() {
 
   const itemsFromText = useMemo(() => parseFreeformToItems(details), [details]);
 
-  // sanitize amount as the user types: keep only digits and .,
+  // sanitize amount as the user types
   const onChangeQty = (txt) => {
     const cleaned = String(txt).replace(/[^\d.,]/g, "");
     setQuantity(cleaned);
@@ -92,8 +102,8 @@ export default function Edit_Scan_FoodScan() {
   // robust numeric parse (clamped)
   const qtyNumber = useMemo(() => {
     const n = Number(String(quantity).replace(",", "."));
-    if (!Number.isFinite(n) || n < 0) return null;   // invalid -> null
-    return Math.max(0, Math.min(5000, n));           // clamp 0..5000
+    if (!Number.isFinite(n) || n < 0) return null;
+    return Math.max(0, Math.min(5000, n));
   }, [quantity]);
 
   // quick example chips based on selected unit
@@ -134,12 +144,33 @@ export default function Edit_Scan_FoodScan() {
 
   /* ---------- recalc helper (ONLY called by button) ---------- */
   async function doRecalc() {
+    // 📌 BARCODE-SPECIFIC PROMPT (only change to prompt)
+    const barcodePrompt = `
+You are a nutrition assistant for a PACKAGED PRODUCT scanned by BARCODE.
+Given the user text, infer brand, product name, flavor/variant, and package size.
+Return a structured JSON with:
+- title (string)
+- brand (string)
+- image_cloud_url (string|null if unknown)
+- calories_kcal_total (number)
+- protein_g, fat_g, carbs_g, sugar_g, fiber_g, sodium_mg (numbers, grams except sodium in mg)
+- health_score (0..10 number)
+- items: array of { name, subtitle?, calories_kcal? } (lightweight components inside the package)
+- ingredients_full: array of { name, estimated_kcal? } (top 3–10 ingredients parsed from label if known)
+- alternatives_flat: array of { brand, name, flavor_or_variant?, calories_per_package_kcal?, bucket } 
+  where bucket ∈ {"lower","similar","higher"} relative to calories_kcal_total
+Keep values realistic; if unknown, use null or omit. Do NOT include instructions—JSON only.
+    `.trim();
+
     const overrides = {
       title: tc(details || ""),
       items: itemsFromText,
       unit,
       servings,
       request_alternatives: true,
+      request_ingredients: true,
+      mode: "barcode",
+      extra_prompt: barcodePrompt, // <-- just the prompt change
     };
     if (qtyNumber !== null) overrides.quantity = qtyNumber;
 
@@ -152,7 +183,7 @@ export default function Edit_Scan_FoodScan() {
 
     try {
       setLoading(true);
-      addLog?.("EditSheet: RECALCULATE pressed");
+      addLog?.("EditSheet: RECALCULATE pressed (barcode)");
 
       const updated = await recalcWithEdits({
         openAiApiKey: OPENAI_API_KEY_FALLBACK,
@@ -169,7 +200,9 @@ export default function Edit_Scan_FoodScan() {
         const ref = doc(db, "users", userId, "RecentlyEaten", currentItemId);
 
         const payload = {
-          // track user edits (useful for audit / UX)
+          scan_mode: "barcode",
+
+          // track user edits
           edited_overrides: {
             title: overrides.title,
             items: overrides.items,
@@ -181,6 +214,9 @@ export default function Edit_Scan_FoodScan() {
           // merge any recalculated nutrition from the AI response
           ...(updated && {
             title: updated.title ?? overrides.title,
+            brand: updated.brand ?? null,
+            image_cloud_url: updated.image_cloud_url ?? null,
+
             calories_kcal_total:
               Number.isFinite(Number(updated?.calories_kcal_total))
                 ? Number(updated.calories_kcal_total)
@@ -192,9 +228,16 @@ export default function Edit_Scan_FoodScan() {
             fiber_g: Number(updated?.fiber_g) || 0,
             sodium_mg: Number(updated?.sodium_mg) || 0,
             health_score: Number(updated?.health_score) || 0,
+
+            // keep items
             items: Array.isArray(updated?.items) ? updated.items : overrides.items || [],
+
+            // ✅ NEW: save ingredients & alternatives in shapes your UI understands
+            ingredients_full: Array.isArray(updated?.ingredients_full) ? updated.ingredients_full : [],
+            alternatives_flat: Array.isArray(updated?.alternatives_flat) ? updated.alternatives_flat : [],
             alternatives: Array.isArray(updated?.alternatives) ? updated.alternatives : [],
-            // keep the raw blob if your recalc returns it
+
+            // raw blob if your recalc returns it
             updated_raw: JSON.stringify(updated),
           }),
 
@@ -202,7 +245,11 @@ export default function Edit_Scan_FoodScan() {
         };
 
         await setDoc(ref, payload, { merge: true });
-        addLog?.("EditSheet: Firestore merge saved.");
+
+          setCurrentItemId(docRef.id)
+            setCurrentItem(payload)
+        
+        addLog?.("EditSheet: Firestore merge saved (barcode).");
       }
     } catch (e) {
       const msg = String(e?.message || e);
@@ -239,7 +286,7 @@ export default function Edit_Scan_FoodScan() {
           <TextInput
             value={details}
             onChangeText={setDetails}
-            placeholder="e.g., Feuille de manioc with white rice and beef"
+            placeholder="e.g., Shin Kimchi Noodles (120g pack)"
             autoCapitalize="none"
             autoCorrect
             blurOnSubmit
@@ -247,6 +294,17 @@ export default function Edit_Scan_FoodScan() {
             onSubmitEditing={Keyboard.dismiss}   // no auto recalc
             style={styles.input}
           />
+          {/* 🧠 barcode hint */}
+          <View style={styles.hintCard}>
+            <Info size={14} color="#111" />
+            <Text style={styles.hintText}>
+              Barcode tip: include <Text style={styles.bold}>brand</Text>,{" "}
+              <Text style={styles.bold}>product name</Text>,{" "}
+              <Text style={styles.bold}>flavor/variant</Text>, and{" "}
+              <Text style={styles.bold}>package size</Text>.{" "}
+              Example: <Text style={styles.bold}>“Nissin Cup Noodles Spicy 70g”</Text>
+            </Text>
+          </View>
 
           {/* unit selector */}
           <View style={styles.row}>
@@ -313,6 +371,53 @@ export default function Edit_Scan_FoodScan() {
               />
               <Text style={styles.suffix}>{unit}</Text>
             </View>
+
+            {/* Barcode hint (inline styles) */}
+<View
+  style={{
+    width: "90%",
+    alignSelf: "center",
+    marginTop: height(1),
+    marginBottom: height(1.5),
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 12,
+    backgroundColor: "#F5F7FB",
+    borderWidth: 1,
+    borderColor: "#EAEFF5",
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+  }}
+>
+  <Info size={14} color="#111" />
+
+  <View style={{ flex: 1 }}>
+    <Text
+      style={{
+        fontSize: size(12),
+        fontWeight: "800",
+        color: "#111",
+        marginBottom: 4,
+      }}
+    >
+      Barcode tip
+    </Text>
+
+    <Text style={{ color: "#374151", lineHeight: 18 }}>
+      Include{" "}
+      <Text style={{ fontWeight: "700", color: "#111" }}>brand</Text>,{" "}
+      <Text style={{ fontWeight: "700", color: "#111" }}>product</Text>,{" "}
+      <Text style={{ fontWeight: "700", color: "#111" }}>flavor/variant</Text>, and{" "}
+      <Text style={{ fontWeight: "700", color: "#111" }}>package size</Text>. Example:{" "}
+      <Text style={{ fontWeight: "700", color: "#111" }}>
+        "Nissin Cup Noodles Spicy 70g"
+      </Text>
+      .
+    </Text>
+  </View>
+</View>
+
 
             {/* example chips */}
             <View style={styles.examplesWrap}>
@@ -419,7 +524,7 @@ const styles = StyleSheet.create({
   labelTop: {
     marginLeft: width(5),
     marginTop: height(5),
-    marginBottom: height(2),
+    marginBottom: height(1),
     fontWeight: "700",
     fontSize: size(15),
   },
@@ -437,6 +542,21 @@ const styles = StyleSheet.create({
       android: { elevation: 1, shadowColor: "#00000030" },
     }),
   },
+  hintCard: {
+    width: "90%",
+    alignSelf: "center",
+    marginTop: 8,
+    marginBottom: height(1),
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: "#F5F7FB",
+    borderWidth: 1,
+    borderColor: "#EAEFF5",
+    flexDirection: "row",
+    gap: 8,
+  },
+  hintText: { flex: 1, color: "#374151" },
 
   row: {
     width: "90%",
