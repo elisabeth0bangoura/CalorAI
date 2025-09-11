@@ -1,5 +1,5 @@
 // Layout.tsx
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Dimensions,
   LayoutChangeEvent,
@@ -7,7 +7,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  View,
+  View
 } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import PagerView, { PagerViewOnPageSelectedEvent } from "react-native-pager-view";
@@ -26,6 +26,13 @@ import { CameraActiveProvider } from "../Context/CameraActiveContext";
 import { ScanResultsProvider } from "../Context/ScanResultsContext";
 import { SheetsProvider } from "../Context/SheetsContext";
 import Tabbar from "../TabBar";
+// App.js
+import { Platform } from "react-native";
+import Purchases, { LOG_LEVEL } from "react-native-purchases";
+
+
+
+
 
 const { width: SCREEN_W } = Dimensions.get("window");
 const HEADER_H = height(15);
@@ -54,6 +61,58 @@ type RouteItem = {
 };
 
 export default function Layout(): React.ReactElement {
+
+
+
+  const RC_API_KEY_IOS = "appl_NXiRaGiutUTVBSDxpemQtSbCWCv";
+  const RC_API_KEY_ANDROID = undefined; // falls Android später
+
+  const [rcReady, setRcReady] = useState(false);
+
+  // 1) Configure EINMAL am Start
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        Purchases.setLogLevel(LOG_LEVEL.VERBOSE);
+
+        await Purchases.configure({
+          apiKey: Platform.select({
+            ios: RC_API_KEY_IOS,
+            android: RC_API_KEY_ANDROID,
+          })!,
+          // optional:
+          // appUserID: "your-user-id",
+          // observerMode: false,
+        });
+
+        if (!cancelled) setRcReady(true);
+      } catch (e) {
+        console.warn("RevenueCat configure failed:", e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // 2) Erst NACH configure irgendwas aufrufen
+  useEffect(() => {
+    if (!rcReady) return;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const offerings = await Purchases.getOfferings();
+        if (!cancelled) console.log("offerings", offerings);
+      } catch (e) {
+        console.warn("getOfferings failed:", e);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [rcReady]);
+
+
+
   const insets = useSafeAreaInsets();
 
   const pagerRef = useRef<PagerView>(null);

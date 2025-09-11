@@ -1501,7 +1501,7 @@ PODS:
     - ExpoModulesCore
   - ExpoHaptics (14.1.4):
     - ExpoModulesCore
-  - ExpoHead (5.1.5):
+  - ExpoHead (5.1.6):
     - ExpoModulesCore
   - ExpoImage (2.4.0):
     - ExpoModulesCore
@@ -1801,11 +1801,11 @@ PODS:
   - nanopb/decode (3.30910.0)
   - nanopb/encode (3.30910.0)
   - PromisesObjC (2.4.0)
-  - PurchasesHybridCommon (16.2.2):
-    - RevenueCat (= 5.34.0)
-  - PurchasesHybridCommonUI (16.2.2):
-    - PurchasesHybridCommon (= 16.2.2)
-    - RevenueCatUI (= 5.34.0)
+  - PurchasesHybridCommon (17.5.1):
+    - RevenueCat (= 5.37.0)
+  - PurchasesHybridCommonUI (17.5.1):
+    - PurchasesHybridCommon (= 17.5.1)
+    - RevenueCatUI (= 5.37.0)
   - RCT-Folly (2024.11.18.00):
     - boost
     - DoubleConversion
@@ -3651,9 +3651,9 @@ PODS:
     - React-perflogger (= 0.79.5)
     - React-utils (= 0.79.5)
   - RecaptchaInterop (101.0.0)
-  - RevenueCat (5.34.0)
-  - RevenueCatUI (5.34.0):
-    - RevenueCat (= 5.34.0)
+  - RevenueCat (5.37.0)
+  - RevenueCatUI (5.37.0):
+    - RevenueCat (= 5.37.0)
   - RNCAsyncStorage (2.1.2):
     - DoubleConversion
     - glog
@@ -3815,11 +3815,11 @@ PODS:
     - ReactCommon/turbomodule/bridging
     - ReactCommon/turbomodule/core
     - Yoga
-  - RNPaywalls (9.2.2):
-    - PurchasesHybridCommonUI (= 16.2.2)
+  - RNPaywalls (9.4.0):
+    - PurchasesHybridCommonUI (= 17.5.1)
     - React-Core
-  - RNPurchases (9.2.2):
-    - PurchasesHybridCommon (= 16.2.2)
+  - RNPurchases (9.4.0):
+    - PurchasesHybridCommon (= 17.5.1)
     - React-Core
   - RNReactNativeHapticFeedback (2.3.3):
     - DoubleConversion
@@ -4069,9 +4069,9 @@ PODS:
     - ReactCommon/turbomodule/bridging
     - ReactCommon/turbomodule/core
     - Yoga
-  - SDWebImage (5.21.1):
-    - SDWebImage/Core (= 5.21.1)
-  - SDWebImage/Core (5.21.1)
+  - SDWebImage (5.21.2):
+    - SDWebImage/Core (= 5.21.2)
+  - SDWebImage/Core (5.21.2)
   - SDWebImageAVIFCoder (0.11.0):
     - libavif/core (>= 0.11.0)
     - SDWebImage (~> 5.10)
@@ -4571,7 +4571,7 @@ SPEC CHECKSUMS:
   ExpoFileSystem: 9681caebda23fa1b38a12a9c68b2bade7072ce20
   ExpoFont: 091a47eeaa1b30b0b760aa1d0a2e7814e8bf6fe6
   ExpoHaptics: 68c215e070f660e0a29c45dcda4f60eeff08aefb
-  ExpoHead: 76d17284733254926d2e7127c1aef938f18188d1
+  ExpoHead: 5d6cc0ece4bd4c274a0e551cf5877c6d0433cec1
   ExpoImage: 04ffc79f9a0391573b77efbc549d59c655caa5a8
   ExpoImageManipulator: 094b748056f2654d5d7813370c910e20ef3d79b4
   ExpoImagePicker: d2fff488a0738343a3cc21e98544ee9feafaa0e6
@@ -4616,8 +4616,8 @@ SPEC CHECKSUMS:
   lottie-react-native: ac85754c6409da43b0b37b58b7042bc050aad57c
   nanopb: fad817b59e0457d11a5dfbde799381cd727c1275
   PromisesObjC: f5707f49cb48b9636751c5b2e7d227e43fba9f47
-  PurchasesHybridCommon: 62f852419aae7041792217593998f7ac3f8b567d
-  PurchasesHybridCommonUI: 365fd90992bd91e6d330f5a91dcc8459a5a6ba14
+  PurchasesHybridCommon: 27724c7db82f807ecaf301eccf6b188b56714fb7
+  PurchasesHybridCommonUI: ab4e15d5fd1692583192d1fdeeae9210c2a7ac23
   RCT-Folly: 36fe2295e44b10d831836cc0d1daec5f8abcf809
   RCTDeprecation: 5f638f65935e273753b1f31a365db6a8d6dc53b5
   RCTRequired: 8b46a520ea9071e2bc47d474aa9ca31b4a935bd8
@@ -4687,8 +4687,8 @@ SPEC CHECKSUMS:
   ReactCodegen: 28eb66b3670b0f91cae893a4b3b34813c305c34f
   ReactCommon: 3dbed0a44e9e5d7b77b0f35983633aa5d33c9694
   RecaptchaInterop: 11e0b637842dfb48308d242afc3f448062325aba
-  RevenueCat: eb2aa042789d9c99ad5172bd96e28b96286d6ada
-  RevenueCatUI: 03025a80b64ce8ff8e43f47a7eb9dbbb6b4f486e
+  RevenueCat: fc4ad171bbfbfb974210f0b26ce470b007be111f
+  RevenueCatUI: cf8e3cc5ed9bef944138a991577a28c0c4454020
   RNCAsyncStorage: e25fda4679876e5204c4c502d297757ec1f17ced
   RNCMaskedView: 16e6917a83e0696d3b5edd69f940c2e1fb377a66
   RNCPicker: c402dfdfcf5e72ba6764234fb8d1bacd07d36094
@@ -4699,13 +4699,13 @@ SPEC CHECKSUMS:
   RNFlashList: d698d1afdda4a2b1a7bce9b7c1437460b6110298
   RNGestureHandler: 85b0463dbfed54eaba4360e31c0aa1a0fe83a6a6
   RNGoogleSignin: be1fbe1c9e0d438e87ae3d79329cc3f1407ba98c
-  RNPaywalls: 1759bd0e34ea5a661e13b58f39ce176623633309
-  RNPurchases: c2246c06491b0a739d5ea2e963433203bec1ef0f
+  RNPaywalls: 0a591c744d57b83acc93c2feecef1ff9759742ec
+  RNPurchases: eac6b93fe861b158b8c53b39af015256b2ca0201
   RNReactNativeHapticFeedback: 85c0a6ff490d52f5e8073040296fefe5945ebbfa
   RNReanimated: 7b926938d4190114e5848b5b022d83dbc2c0fe2c
   RNScreens: d9d5d8a2a484bb4446968bfa00db991f1117db44
   RNSVG: 257f59c952e296c9c36035a8f49b61fda48e398a
-  SDWebImage: f29024626962457f3470184232766516dee8dfea
+  SDWebImage: 9f177d83116802728e122410fb25ad88f5c7608a
   SDWebImageAVIFCoder: 00310d246aab3232ce77f1d8f0076f8c4b021d90
   SDWebImageSVGCoder: 15a300a97ec1c8ac958f009c02220ac0402e936c
   SDWebImageWebPCoder: e38c0a70396191361d60c092933e22c20d5b1380

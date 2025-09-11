@@ -5,7 +5,7 @@ import { Href, usePathname, useRouter } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import React, { useEffect, useRef, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { LogBox, StyleSheet, View, } from 'react-native';
 import { height } from 'react-native-responsive-sizes';
 
 SplashScreen.preventAutoHideAsync();
@@ -21,6 +21,8 @@ function isAppleOrGoogle(user: FirebaseAuthTypes.User) {
 }
 
 export default function Index() {
+LogBox.ignoreAllLogs(true);
+
   const router = useRouter();
   const pathname = usePathname();
   const [loading, setLoading] = useState(true);

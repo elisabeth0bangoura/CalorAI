@@ -14,12 +14,21 @@ import { ScanResultsProvider } from "./Context/ScanResultsContext";
 import { SheetsProvider } from "./Context/SheetsContext";
 import { StepsProvider } from "./Context/StepsContext";
 import { StreakProvider } from "./Context/StreakContext";
+
+
 // Optional: make sure we start at app/index
 export const unstable_settings = {
   initialRouteName: "index",
 };
-// ...
+
+
 export default function RootLayout() {
+
+
+
+
+
+
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
    

@@ -5,12 +5,14 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/Logo_App_white.png",
-    "scheme": "calorAI",
+    "scheme": "calorai",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
       "usesAppleSignIn": true,
-       "UIBackgroundModes": ["audio"],
+      "UIBackgroundModes": [
+        "audio"
+      ],
       "googleServicesFile": "./GoogleService-Info.plist",
       "NSCameraUsageDescription": "We need the camera to scan your fridge.",
       "supportsTablet": true,
@@ -19,7 +21,6 @@
     },
     "android": {
       "googleServicesFile": "./google-services.json",
-  
       "adaptiveIcon": {
         "foregroundImage": "./assets/Logo_App_white.png",
         "backgroundColor": "#fff"
@@ -27,7 +28,7 @@
       "edgeToEdgeEnabled": true,
       "package": "com.CalorAI",
       "permissions": [
-        "FOREGROUND_SERVICE_MEDIA_PLAYBACK",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
         "android.permission.READ_CALENDAR",
         "android.permission.WRITE_CALENDAR",
         "android.permission.CAMERA",
@@ -47,7 +48,7 @@
           "calendarPermission": "The app needs to access your calendar."
         }
       ],
-     [
+      [
         "expo-video",
         {
           "supportsBackgroundPlayback": true,
@@ -97,12 +98,18 @@
           }
         }
       ],
-       "expo-apple-authentication",
+      "expo-apple-authentication",
       "@react-native-firebase/app",
       "@react-native-firebase/auth"
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "50d7c022-6770-4ddc-9828-b2c78e68a3c1"
+      }
     }
   }
 }
