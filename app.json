@@ -4,7 +4,7 @@
     "slug": "calorai",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/Logo_App_white.png",
+    "icon": "./assets/Pink_Logo.png",
     "scheme": "calorai",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
@@ -22,8 +22,8 @@
     "android": {
       "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
-        "foregroundImage": "./assets/Logo_App_white.png",
-        "backgroundColor": "#fff"
+        "foregroundImage": "./assets/Pink_Logo.png",
+        "backgroundColor": "#F5BCCC"
       },
       "edgeToEdgeEnabled": true,
       "package": "com.CalorAI",
@@ -38,7 +38,7 @@
     "web": {
       "bundler": "metro",
       "output": "static",
-      "favicon": "./assets/Logo_App_white.png"
+      "favicon": "./assets/Pink_Logo.png"
     },
     "plugins": [
       "expo-router",
@@ -84,10 +84,10 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/Logo_App_white.png",
+          "image": "./assets/Pink_Logo.png",
           "imageWidth": 200,
           "resizeMode": "contain",
-          "backgroundColor": "#fff"
+          "backgroundColor": "#F5BCCC"
         }
       ],
       [

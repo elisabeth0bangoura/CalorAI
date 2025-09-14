@@ -6,13 +6,13 @@ import { height, width as rsWidth, size, width } from "react-native-responsive-s
 
 import { getAuth } from "@react-native-firebase/auth";
 import {
-    collection,
-    doc,
-    getFirestore,
-    limit,
-    onSnapshot,
-    orderBy,
-    query,
+  collection,
+  doc,
+  getFirestore,
+  limit,
+  onSnapshot,
+  orderBy,
+  query,
 } from "@react-native-firebase/firestore";
 import { Image } from "expo-image";
 
@@ -276,13 +276,13 @@ export default function HealthChecksCardFlatList({
                           height: size(30),
                           width: size(30),
                           borderRadius:size(30)/2,
-                          backgroundColor: "#151515",
+
                           alignItems: "center",
                           justifyContent: "center",
                           marginRight: width(3),
                         }}
                       >
-                        <Icon size={14} strokeWidth={3}  color={"#fff"} />
+                        <Icon size={16} strokeWidth={3}  color={"#000"} />
                       </View>
 
                       <Text

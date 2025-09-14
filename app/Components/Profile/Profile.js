@@ -1,3 +1,4 @@
+import { useSheets } from "@/app/Context/SheetsContext";
 import { Image } from "expo-image";
 import { Flame, Goal, Handshake, HatGlasses, History, LineChart, Mail, RefreshCcw, Trash2, UserRound } from "lucide-react-native";
 import {
@@ -17,6 +18,21 @@ import SignOutButton from "./SignOutButton";
 export default function Profile() {
 
   LogBox.ignoreAllLogs(true);
+  const {
+    register, present, dismiss, dismissAll,
+    isS2Open, setIsS2Open,
+    isS3Open, setIsS3Open,
+    isS4Open, setIsS4Open,
+    isS5Open, setIsS5Open,
+    isS6Open, setIsS6Open,
+    isS7Open, setIsS7Open,
+    isS8Open, setIsS8Open,
+    isS9Open, setIsS9Open,
+   isPerosnalDetailsOpen, setIsPerosnalDetailsOpen,
+   isTargetWeightOpen, setIsTargetWeightOpen,
+  } = useSheets();
+
+
 
 
   
@@ -78,7 +94,10 @@ export default function Profile() {
 
 
 
-    <TouchableOpacity style={{
+    <TouchableOpacity onPress={() => {
+        present("PerosnalDetails")
+    }}
+    style={{
         width: "90%",
         flexDirection: 'row',
         marginLeft: width(5),
@@ -104,7 +123,10 @@ export default function Profile() {
 
 
 
-    <TouchableOpacity style={{
+    <TouchableOpacity onPress={() => {
+        present("EditNutritionGoals")
+    }}
+    style={{
         width: "90%",
         flexDirection: 'row',
         marginLeft: width(5),

@@ -1,26 +1,46 @@
-// useOpenAIRecipesPrefetch.js
-// Prefetch up to N recipes once, then reveal pageSize at a time as user scrolls.
-// ⚠️ Do NOT ship your OpenAI key in a production client app.
-// For production, proxy this request via your server and omit apiKey here.
-
-import AsyncStorage from "@react-native-async-storage/async-storage";
+// RecipesScreen.js
 import axios from "axios";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-  const apiKey =
-    "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";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ActivityIndicator, FlatList, Image, RefreshControl, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+// React Native Firebase v22 (modular)
+import {
+  collection,
+  doc,
+  getDocs,
+  getFirestore,
+  onSnapshot,
+  serverTimestamp,
+  writeBatch,
+} from "@react-native-firebase/firestore";
 
-const COLORS = { Easy: "#00CE39", Medium: "#FF8C03", Hard: "#FE1B20" };
+// Optional: silence RNFB v22 warnings (set before Firebase init)
+globalThis.RNFB_SILENCE_MODULAR_DEPRECATION_WARNINGS = true;
 
-// ---- helpers --------------------------------------------------------------
-const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+// ── OpenAI config ────────────────────────────────────────────────────────────
+const API_BASE = "https://api.openai.com";
+const API_KEY  =  "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"; // ⚠️ Don’t ship real keys in prod
 
-// Build a compact representation of inventory so prompts are small & stable.
-function buildCompactInventory(items = []) {
+const MODEL   = "gpt-5"; // or "gpt-4o-mini", etc.
+const COLORS  = { Easy: "#00CE39", Medium: "#FF8C03", Hard: "#FE1B20" };
+const clamp   = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+
+// ── helpers: stable hashing (no Date.now()) ──────────────────────────────────
+function buildInventoryForHash(items = []) {
+  return (items || []).map((it) => {
+    const title = (it.title || it.name || "").toString().trim().slice(0, 60);
+    const qty   = Number.isFinite(it.quantity) ? it.quantity : 1;
+    const unit  = it.unit || null;
+    const exp   = it.expirationDate || it.expires_at || null;
+    const iso   = exp ? new Date(exp).toISOString().slice(0, 10) : null;
+    return { title, qty, unit, expirationDate: iso };
+  });
+}
+function buildInventoryForPrompt(items = []) {
   const now = Date.now();
   return (items || []).map((it) => {
     const title = (it.title || it.name || "").toString().trim().slice(0, 60);
-    const qty = Number.isFinite(it.quantity) ? it.quantity : 1;
-    const unit = it.unit || null;
+    const qty   = Number.isFinite(it.quantity) ? it.quantity : 1;
+    const unit  = it.unit || null;
     let days = null;
     const exp = it.expirationDate || it.expires_at || null;
     if (exp) {
@@ -30,21 +50,18 @@ function buildCompactInventory(items = []) {
     return { title, qty, unit, daysToExpiry: days };
   });
 }
-
-// Simple fast hash for cache keys (djb2)
 function hashString(s) {
   let h = 5381;
   for (let i = 0; i < s.length; i++) h = (h * 33) ^ s.charCodeAt(i);
   return (h >>> 0).toString(36);
 }
-
 function normalizeRecipes(arr = []) {
   return arr.map((r, i) => {
     const lvl = ["Easy", "Medium", "Hard"].includes(r?.difficulty?.level)
       ? r.difficulty.level
       : "Easy";
     return {
-      id: r?.id || String(i + 1),
+      id: String(r?.id || i + 1),
       title: r?.title || "Untitled Recipe",
       description: r?.description || "",
       image: r?.image ?? null,
@@ -56,93 +73,118 @@ function normalizeRecipes(arr = []) {
   });
 }
 
-async function readCache(key) {
-  try {
-    const raw = await AsyncStorage.getItem(key);
-    if (!raw) return null;
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
-}
-async function writeCache(key, val) {
-  try {
-    await AsyncStorage.setItem(key, JSON.stringify(val));
-  } catch {}
-}
+// ── UI card ──────────────────────────────────────────────────────────────────
+const RecipeCard = ({ recipe }) => (
+  <View style={styles.card}>
+    {recipe.image ? (
+      <Image source={{ uri: recipe.image }} style={styles.image} />
+    ) : (
+      <View style={[styles.image, styles.imagePlaceholder]}>
+        <Text style={{ color: "#888" }}>No image</Text>
+      </View>
+    )}
+    <View style={{ flex: 1 }}>
+      <Text style={styles.title}>{recipe.title}</Text>
+      {!!recipe.description && <Text numberOfLines={2} style={styles.desc}>{recipe.description}</Text>}
+      <View style={styles.row}>
+        <Text style={styles.badge}>👥 {recipe.servings}</Text>
+        <Text style={styles.badge}>⏱ {recipe.cookTime}</Text>
+        <View style={[styles.diff, { backgroundColor: recipe.difficulty?.color || COLORS.Easy }]}>
+          <Text style={styles.diffText}>{recipe.difficulty?.level || "Easy"}</Text>
+        </View>
+      </View>
+    </View>
+  </View>
+);
 
-// ---- hook -----------------------------------------------------------------
-/**
- * useOpenAIRecipesPrefetch
- * Calls OpenAI once for up to `totalCount` recipes, caches them, and exposes a paged list.
- *
- * @param {Object} params
- * @param {Array}   params.items                 Firestore inventory array
- * @param {boolean} params.enabled               Start when true (e.g., !loading)
- * @param {number}  [params.totalCount=20]       How many recipes to fetch initially
- * @param {number}  [params.pageSize=5]          How many to reveal per scroll
- * @param {string}  [params.model="o4-mini"]     OpenAI model
- * @param {string}  [params.apiKey]              OpenAI key (prefer server proxy in prod)
- * @param {number}  [params.revalidateMs=21600000]  Cache staleness window (default 6h)
- * @param {string}  [params.cacheKeyPrefix="recipes-v1"]  Cache namespace
- * @param {string}  [params.apiBase="https://api.openai.com"]  Override for proxy/base
- */
-export default function useOpenAIRecipesPrefetch({
-  items,
-  enabled,
-  totalCount = 20,
-  pageSize = 5,
-  model = "o4-mini",
-  revalidateMs = 6 * 60 * 60 * 1000,
-  cacheKeyPrefix = "recipes-v1",
-  apiBase = "https://api.openai.com",
+// ── Screen (auto-regenerate on Inventory changes) ────────────────────────────
+export default function RecipesScreen({
+  userId,          // REQUIRED: Firestore path users/{userId}/Inventory
+  totalCount = 24,
+  pageSize = 6,
 }) {
-  const [allRecipes, setAllRecipes] = useState([]);
+  const db = useMemo(() => getFirestore(), []);
+
+  const [inventory, setInventory] = useState([]);
+  const [invLoading, setInvLoading] = useState(true);
+
+  const [recipes, setRecipes] = useState([]);
   const [visibleCount, setVisibleCount] = useState(pageSize);
-  const [recipesLoading, setRecipesLoading] = useState(false);
-  const [recipesError, setRecipesError] = useState(null);
+  const [loading, setLoading] = useState(false); // for recipe gen/load
+  const [error, setError] = useState(null);
 
-  // Derived visible slice
-  const ramenRecipes = useMemo(
-    () => allRecipes.slice(0, visibleCount),
-    [allRecipes, visibleCount]
-  );
-  const recipesEnd = visibleCount >= allRecipes.length;
-
+  const generatingRef = useRef(false);            // guard against loops
+  const attemptedHashesRef = useRef(new Set());   // don’t retry failed hash immediately
   const aliveRef = useRef(true);
-  const isFetchingRef = useRef(false);
-  const abortRef = useRef(null);
-  const lastHashRef = useRef(null);
 
+  useEffect(() => () => { aliveRef.current = false; }, []);
+
+  // 1) Live-listen to Inventory
   useEffect(() => {
-    return () => {
-      aliveRef.current = false;
-      if (abortRef.current) abortRef.current.abort();
-    };
-  }, []);
+    if (!userId) { setInventory([]); setInvLoading(false); return; }
+    const unsub = onSnapshot(
+      collection(db, "users", userId, "Inventory"),
+      (snap) => {
+        const items = [];
+        snap.forEach((d) => items.push(d.data()));
+        setInventory(items);
+        setInvLoading(false);
+      },
+      (err) => {
+        console.warn("Inventory onSnapshot error:", err?.message || err);
+        setInventory([]);
+        setInvLoading(false);
+      }
+    );
+    return () => unsub();
+  }, [db, userId]);
 
-  // Build stable hash of compact inventory; refetch only if it changes
-  const invCompact = useMemo(() => buildCompactInventory(items), [items]);
-  const invJson = useMemo(() => JSON.stringify(invCompact), [invCompact]);
-  const invHash = useMemo(() => hashString(invJson), [invJson]);
-  const cacheKey = `${cacheKeyPrefix}:${invHash}:${totalCount}:${pageSize}:${model}`;
+  // Stable hash of inventory
+  const invForHash = useMemo(() => buildInventoryForHash(inventory), [inventory]);
+  const invHash = useMemo(() => (invForHash.length ? hashString(JSON.stringify(invForHash)) : "no-items"), [invForHash]);
 
-  const setRecipesSafe = useCallback((list) => {
+  const invPromptJson = useMemo(() => JSON.stringify(buildInventoryForPrompt(inventory)), [inventory]);
+
+  // Read recipe cache for user/hash
+  const readCache = useCallback(async () => {
+    if (!userId) return [];
+    const col = collection(db, "users", userId, "recipeCaches", invHash, "recipes");
+    const snap = await getDocs(col);
+    const out = [];
+    snap.forEach((d) => out.push(d.data()));
+    return normalizeRecipes(out);
+  }, [db, userId, invHash]);
+
+  // Write cache
+  const writeCache = useCallback(async (normalized) => {
+    if (!userId) return;
+    const batch = writeBatch(db);
+    const meta = doc(db, "users", userId, "recipeCaches", invHash);
+    batch.set(meta, {
+      userId, hash: invHash, totalCount: normalized.length,
+      updatedAt: serverTimestamp(), inventorySnapshot: invForHash,
+    });
+    const col = collection(db, "users", userId, "recipeCaches", invHash, "recipes");
+    normalized.forEach((r) => batch.set(doc(col, r.id), r));
+    await batch.commit();
+  }, [db, userId, invHash, invForHash]);
+
+  const setRecipesPaged = useCallback((list) => {
     if (!aliveRef.current) return;
-    setAllRecipes(list);
+    setRecipes(list);
     setVisibleCount((c) => clamp(Math.min(pageSize, list.length), 0, list.length));
   }, [pageSize]);
 
-  const fetchFromOpenAI = useCallback(async () => {
-    if (isFetchingRef.current) return;
-    isFetchingRef.current = true;
-    setRecipesLoading(true);
-    setRecipesError(null);
+  // Generate (guarded)
+  const generate = useCallback(async () => {
+    if (!userId) return;
+    if (!inventory || inventory.length === 0) return; // don’t generate for empty inventory
+    if (generatingRef.current) return;
+    if (attemptedHashesRef.current.has(invHash)) return; // avoid quick retry loops
 
-    // abort previous if any
-    if (abortRef.current) abortRef.current.abort();
-    const controller = new AbortController();
-    abortRef.current = controller;
+    generatingRef.current = true;
+    setLoading(true);
+    setError(null);
 
     try {
       const system =
@@ -152,136 +194,148 @@ export default function useOpenAIRecipesPrefetch({
         `{"recipes":[{"id":"string","title":"string","description":"string","image":"string|null","servings":1,"cookTime":"20 min","difficulty":{"level":"Easy|Medium|Hard","color":"#hex"},"expirationDate":"YYYY-MM-DD|null"}]}\n` +
         `Use these difficulty colors exactly: Easy=${COLORS.Easy}, Medium=${COLORS.Medium}, Hard=${COLORS.Hard}.`;
 
-      const user = `INVENTORY:\n${invJson}`;
-
-      // Prefer proxy in production:
-      // const url = "https://<your-api>/recipes";
-      const url = `${apiBase}/v1/chat/completions`;
-
-      const headers = apiBase.includes("openai.com")
-        ? { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }
-        : { "Content-Type": "application/json" }; // proxy handles auth
-
+      const headers = { Authorization: `Bearer ${API_KEY}`, "Content-Type": "application/json" };
       const resp = await axios.post(
-        url,
+        `${API_BASE}/v1/chat/completions`,
         {
-          model,
+          model: MODEL,
           response_format: { type: "json_object" },
           messages: [
             { role: "system", content: system },
-            { role: "user", content: user },
+            { role: "user", content: `INVENTORY:\n${invPromptJson}` },
           ],
         },
-        { timeout: 20000, headers, signal: controller.signal }
+        { timeout: 20000, headers }
       );
-
-      if (!aliveRef.current) return;
 
       const content = resp?.data?.choices?.[0]?.message?.content || "{}";
       let parsed;
-      try {
-        parsed = JSON.parse(content);
-      } catch {
-        parsed = { recipes: [] };
-      }
+      try { parsed = JSON.parse(content); } catch { parsed = { recipes: [] }; }
       const normalized = normalizeRecipes(parsed.recipes || []);
 
-      // Cache result with timestamp + the inventory hash it corresponds to
-      const payload = { ts: Date.now(), hash: invHash, data: normalized };
-      writeCache(cacheKey, payload);
-
-      setRecipesSafe(normalized);
-      lastHashRef.current = invHash;
+      await writeCache(normalized);
+      setRecipesPaged(normalized);
     } catch (e) {
-      if (!aliveRef.current) return;
-      // If aborted, quietly exit
-      if (axios.isCancel?.(e) || e?.name === "CanceledError" || e?.message === "canceled") {
-        return;
-      }
-      console.warn("OpenAI fetch failed:", e?.response?.data || e?.message || e);
-      setRecipesError("Couldn’t generate recipes.");
-      setAllRecipes([]);
-      setVisibleCount(0);
+      console.warn("Generate error:", e?.response?.data || e?.message || e);
+      setError("OpenAI network error. Pull to refresh to retry.");
+      attemptedHashesRef.current.add(invHash);
     } finally {
-      if (aliveRef.current) setRecipesLoading(false);
-      isFetchingRef.current = false;
+      generatingRef.current = false;
+      setLoading(false);
     }
-  }, [apiBase, apiKey, cacheKey, invHash, invJson, model, setRecipesSafe, totalCount]);
+  }, [userId, inventory, invHash, invPromptJson, totalCount, writeCache, setRecipesPaged]);
 
-  // Main effect: load from cache fast, then revalidate if stale or hash changed.
+  // Auto-load whenever inventory (hash) changes:
   useEffect(() => {
-    if (!enabled) return;
-
     let cancelled = false;
-
     (async () => {
-      // If inventory hash unchanged and we already have data, skip everything
-      if (lastHashRef.current === invHash && allRecipes.length > 0) return;
+      if (!userId) return;
+      setLoading(true);
+      setError(null);
+      try {
+        const cached = await readCache();
+        if (cancelled) return;
 
-      // 1) Try cache (fast path)
-      const cached = await readCache(cacheKey);
-      if (cancelled) return;
-
-      const now = Date.now();
-      const isValid =
-        cached &&
-        Array.isArray(cached.data) &&
-        cached.hash === invHash &&
-        now - Number(cached.ts || 0) < revalidateMs;
-
-      if (isValid) {
-        setRecipesSafe(cached.data);
-        lastHashRef.current = invHash;
-        // No network needed if fresh
-        return;
+        if (cached.length > 0) {
+          setRecipesPaged(cached);
+        } else {
+          await generate(); // only runs if inventory has items
+        }
+      } catch (e) {
+        console.warn("Cache load error:", e?.message || e);
+        setError("Failed to load recipes.");
+        setRecipesPaged([]);
+      } finally {
+        if (!cancelled) setLoading(false);
       }
-
-      // 2) If cache exists but stale, show it immediately (stale-while-revalidate)
-      if (cached && Array.isArray(cached.data)) {
-        setRecipesSafe(cached.data);
-      }
-
-      // 3) Revalidate from network
-      await fetchFromOpenAI();
     })();
+    return () => { cancelled = true; };
+  }, [userId, invHash, readCache, generate, setRecipesPaged]);
 
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, invHash, cacheKey, revalidateMs]); // (fetch deps are stable via useCallback)
+  // UI actions
+  const loadMore = useCallback(() => {
+    setVisibleCount((c) => clamp(c + pageSize, 0, recipes.length));
+  }, [recipes.length, pageSize]);
 
-  // Public actions
-  const loadMoreRecipes = useCallback(() => {
-    if (recipesEnd) return;
-    setVisibleCount((c) => clamp(c + pageSize, 0, allRecipes.length));
-  }, [recipesEnd, pageSize, allRecipes.length]);
+  const onRefresh = useCallback(async () => {
+    // manual regenerate (clears attempted-flag so we can retry)
+    attemptedHashesRef.current.delete(invHash);
+    await generate();
+  }, [invHash, generate]);
 
-  const refreshRecipes = useCallback(async () => {
-    // Force a network refresh; keep current cache while revalidating.
-    await fetchFromOpenAI();
-  }, [fetchFromOpenAI]);
+  const noItems = !invLoading && inventory.length === 0;
 
-  const clearRecipesCache = useCallback(async () => {
-    try {
-      await AsyncStorage.removeItem(cacheKey);
-      // Don’t mutate lastHashRef; let next effect re-evaluate.
-    } catch {}
-  }, [cacheKey]);
+  return (
+    <View style={{ flex: 1 }}>
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Recipes</Text>
+      
+      </View>
 
-  return {
-    // visible slice (5, 10, 15, ...)
-    ramenRecipes,
-    recipesLoading,
-    recipesError,
-    recipesEnd,
-
-    // full set
-    allRecipes,
-
-    // actions
-    loadMoreRecipes,
-    refreshRecipes,
-    clearRecipesCache,
-  };
+      {invLoading && recipes.length === 0 ? (
+        <View style={styles.center}>
+          <ActivityIndicator />
+          <Text style={{ marginTop: 8, color: "#666" }}>Loading inventory…</Text>
+        </View>
+      ) : error ? (
+        <View style={styles.center}>
+          <Text style={{ color: "crimson", textAlign: "center" }}>{error}</Text>
+          <TouchableOpacity onPress={onRefresh} style={[styles.refreshBtn, { marginTop: 12 }]}>
+            <Text style={{ color: "#fff", fontWeight: "600" }}>Try Again</Text>
+          </TouchableOpacity>
+        </View>
+      ) : noItems ? (
+        <View style={styles.center}>
+          <Text style={{ color: "#555", textAlign: "center", paddingHorizontal: 24 }}>
+            No items in your fridge yet. Add items to users/{userId}/Inventory to get recipes.
+          </Text>
+        </View>
+      ) : (
+        <FlatList
+          data={recipes.slice(0, visibleCount)}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={{ padding: 12 }}
+          renderItem={({ item }) => <RecipeCard recipe={item} />}
+          onEndReachedThreshold={0.4}
+          onEndReached={() => {
+            if (visibleCount < recipes.length) loadMore();
+          }}
+          ListFooterComponent={
+            visibleCount < recipes.length ? null : (
+              <View style={{ paddingVertical: 16, alignItems: "center" }}>
+                <Text style={{ color: "#777" }}>{recipes.length ? "No more recipes" : "No recipes yet"}</Text>
+              </View>
+            )
+          }
+          refreshControl={
+            <RefreshControl refreshing={loading && recipes.length > 0} onRefresh={onRefresh} />
+          }
+        />
+      )}
+    </View>
+  );
 }
+
+// ── styles ───────────────────────────────────────────────────────────────────
+const styles = StyleSheet.create({
+  header: {
+    paddingTop: 14, paddingBottom: 10, paddingHorizontal: 12,
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "#eee",
+  },
+  headerTitle: { fontSize: 22, fontWeight: "700" },
+  refreshBtn: { backgroundColor: "#111827", paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10 },
+  center: { flex: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: 16 },
+  card: {
+    flexDirection: "row", gap: 12, padding: 12, marginBottom: 12,
+    backgroundColor: "#fff", borderRadius: 12, borderWidth: StyleSheet.hairlineWidth, borderColor: "#eee", elevation: 1,
+  },
+  image: { width: 88, height: 88, borderRadius: 10, backgroundColor: "#f5f5f5" },
+  imagePlaceholder: { alignItems: "center", justifyContent: "center" },
+  title: { fontSize: 16, fontWeight: "700", marginBottom: 4 },
+  desc: { fontSize: 13, color: "#555", marginBottom: 8 },
+  row: { flexDirection: "row", gap: 8, alignItems: "center" },
+  badge: { fontSize: 12, color: "#333", paddingHorizontal: 8, paddingVertical: 4, backgroundColor: "#F3F4F6", borderRadius: 8 },
+  diff: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
+  diffText: { color: "#fff", fontSize: 12, fontWeight: "700" },
+});

@@ -25,9 +25,10 @@ export default function HowManyWorkouts() {
           // If you also need the label elsewhere, store it in context too.
         }}
         style={{
-          height: size(70),
-          justifyContent: "center",
+         justifyContent: "center",
           borderRadius: 10,
+          paddingHorizontal: 10,
+          paddingVertical: 20,
           width: "48%",
           alignSelf: "center",
           marginBottom: 12,

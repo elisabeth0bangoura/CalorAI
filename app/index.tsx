@@ -5,8 +5,8 @@ import { Href, usePathname, useRouter } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import React, { useEffect, useRef, useState } from 'react';
-import { LogBox, StyleSheet, View, } from 'react-native';
-import { height } from 'react-native-responsive-sizes';
+import { LogBox, StyleSheet, Text, View, } from 'react-native';
+import { height, size } from 'react-native-responsive-sizes';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -67,15 +67,19 @@ LogBox.ignoreAllLogs(true);
         <StatusBar style="dark" />
         <View style={styles.container}>
           <Image
-            source={require('../assets/Logo_App_white.png')}
-            style={{ height: 100, width: 100 }}
+            source={require('../assets/Pink_Logo.png')}
+            style={{ height: 200, width: 200 }}
             contentFit="contain"
           />
-          <Image
-            source={require('../assets/Logo_App_white.png')}
-            style={{ height: 100, bottom: height(6), position: 'absolute', width: 100 }}
-            contentFit="contain"
-          />
+         
+         <Text style={{
+          fontSize: size(18),
+          position: 'absolute',
+          bottom: height(10),
+          fontWeight: "700"
+         }}>
+          Bantico
+         </Text>
         </View>
       </>
     );
@@ -87,7 +91,7 @@ LogBox.ignoreAllLogs(true);
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: '#F5BCCC',
     justifyContent: 'center',
     alignItems: 'center',
   },

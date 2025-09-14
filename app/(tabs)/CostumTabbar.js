@@ -13,10 +13,19 @@ import { default as Edit_Scan_FoodScan, default as Edit_ScanpageHome } from "../
 import PageAfterScanFood from "../Components/Camera/PageAfterScan/PageAfterScan_Scan_Food/PageAfterScan_Scan_Food";
 import PageAfterScan_FoodLabel from "../Components/Camera/PageAfterScan/PageAfterScan_Scan_FoodLabel/PageAfterScan_FoodLabel";
 import EditMyWeight from "../Components/EditMyWeight/EditMyWeight";
+import EditHabit_And_Nutrition_Goals from "../Components/Profile/EditHabit_And_Nutrition_Goals/EditHabit_And_Nutrition_Goals";
+import Generate_Based_On_Habits_AndHealth from "../Components/Profile/EditHabit_And_Nutrition_Goals/Generate_Based_On_Habits_AndHealth/Generate_Based_On_Habits_AndHealth";
+import BirthDay from "../Components/Profile/Profile/BirthDay";
+import CurrentWeight from "../Components/Profile/Profile/CurrentWeight";
+import DailyStepsComponent from "../Components/Profile/Profile/DailyStepsSelector";
+import HeightComponent from "../Components/Profile/Profile/HeightComponent";
+import PersonalDetails from "../Components/Profile/Profile/PersonalDetails";
+import TargetWeight from "../Components/Profile/Profile/TargetWeight";
 import ScanPageHome from "../Components/ScanPageHome/ScanPageHome";
-
 import { useCameraActive } from "../Context/CameraActiveContext";
 import { useSheets } from "../Context/SheetsContext";
+
+
 
 /* ---- memo wrappers ---- */
 const MemoCameraCarousel = memo(CameraCarouselSwiper);
@@ -41,6 +50,20 @@ export default function SheetsHost() {
     isS7Open, setIsS7Open,
     isS8Open, setIsS8Open,
     isS9Open, setIsS9Open,
+    isPerosnalDetailsOpen, setIsPerosnalDetailsOpen,
+    isTargetWeightOpen, setIsTargetWeightOpen,
+    isCurrentWeightOpen, 
+    setIsCurrentWeightOpen,
+    isHeightComponentOpen, 
+    setIsHeightComponentOpen,
+    isBirthDayComponentOpen, 
+    setIsBirthDayComponentOpen,
+    isDailyStepsComponentOpen,
+    setIsDailyStepsComponentOpen,
+    isEditNutritionGoalsComponentOpen, 
+    setIsEditNutritionGoalsComponentOpen,
+    isGenerate_Based_On_Habits_AndHealth, 
+    setIsGenerate_Based_On_Habits_AndHealth,
   } = useSheets();
 
   const { activeKey } = useCameraActive();
@@ -52,6 +75,20 @@ export default function SheetsHost() {
   useEffect(() => { console.log("[SheetsHost] s7 open ->", isS7Open); }, [isS7Open]);
   useEffect(() => { console.log("[SheetsHost] s8 open ->", isS8Open); }, [isS8Open]);
   useEffect(() => { console.log("[SheetsHost] s9 open ->", isS9Open); }, [isS9Open]);
+  useEffect(() => { console.log("[SheetsHost] PerosnalDetails open ->", isPerosnalDetailsOpen); }, [isPerosnalDetailsOpen]);
+  useEffect(() => { console.log("[SheetsHost] TargetWeight open ->", isTargetWeightOpen); }, [isTargetWeightOpen]);
+  useEffect(() => { console.log("[SheetsHost] CurrentWeight open ->", isCurrentWeightOpen); }, [isCurrentWeightOpen]);
+  useEffect(() => { console.log("[SheetsHost] HeightComponent open ->", isHeightComponentOpen); }, [isHeightComponentOpen]);
+  useEffect(() => { console.log("[SheetsHost] BirthDayComponent open ->", isBirthDayComponentOpen); }, [isBirthDayComponentOpen]);
+  useEffect(() => { console.log("[SheetsHost] DailyStepsComponentOpen open ->", isDailyStepsComponentOpen); }, [isDailyStepsComponentOpen]);
+  useEffect(() => { console.log("[SheetsHost] EditNutritionGoalsComponentOpen open ->", isEditNutritionGoalsComponentOpen); }, [isEditNutritionGoalsComponentOpen]);
+  useEffect(() => { console.log("[SheetsHost] Generate_Based_On_Habits_AndHealth open ->", isGenerate_Based_On_Habits_AndHealth); }, [isGenerate_Based_On_Habits_AndHealth]);
+
+
+
+
+
+  
 
   /* Only build the heavy s3 body when s3 is open */
   const S3Body = useMemo(() => {
@@ -258,6 +295,150 @@ export default function SheetsHost() {
           <View style={{ padding: 16 }} />
         )}
       </TrueSheet>
+
+
+
+
+
+
+
+
+
+       {/* Perosnal Details Sheet */}
+      <TrueSheet
+        ref={register("PerosnalDetails")}
+        sizes={["large"]}
+        cornerRadius={24}
+        enablePanDownToClose
+        backgroundColor="#fff"
+        onChange={(index) => setIsPerosnalDetailsOpen(typeof index === "number" && index >= 0)}
+        onDismiss={() => setIsPerosnalDetailsOpen(false)}
+      >
+     
+     <PersonalDetails />
+
+            {/* Target Weight Sheet */}
+      <TrueSheet
+        ref={register("TargetWeight")}
+        sizes={["large"]}
+        cornerRadius={24}
+        enablePanDownToClose
+        backgroundColor="#fff"
+        onChange={(index) => setIsTargetWeightOpen(typeof index === "number" && index >= 0)}
+        onDismiss={() => setIsTargetWeightOpen(false)}
+      >
+     
+       <TargetWeight />
+      </TrueSheet>
+
+        <TrueSheet
+        ref={register("CurrentWeight")}
+        sizes={["large"]}
+        cornerRadius={24}
+        enablePanDownToClose
+        backgroundColor="#fff"
+        onChange={(index) => setIsCurrentWeightOpen(typeof index === "number" && index >= 0)}
+        onDismiss={() => setIsCurrentWeightOpen(false)}
+      >
+     
+       <CurrentWeight />
+      </TrueSheet>
+
+
+   <TrueSheet
+        ref={register("HeightComponent")}
+        sizes={["large"]}
+        cornerRadius={24}
+        enablePanDownToClose
+        backgroundColor="#fff"
+        onChange={(index) => setIsHeightComponentOpen(typeof index === "number" && index >= 0)}
+        onDismiss={() => setIsHeightComponentOpen(false)}
+      >
+     
+       <HeightComponent />
+      </TrueSheet>
+
+
+
+
+
+
+  <TrueSheet
+        ref={register("BirthDay")}
+        sizes={["large"]}
+        cornerRadius={24}
+        enablePanDownToClose
+        backgroundColor="#fff"
+        onChange={(index) => setIsBirthDayComponentOpen(typeof index === "number" && index >= 0)}
+        onDismiss={() => setIsBirthDayComponentOpen(false)}
+      >
+     
+       <BirthDay />
+      </TrueSheet>
+
+
+
+<TrueSheet
+        ref={register("DailyStepsComponent")}
+        sizes={["large"]}
+        cornerRadius={24}
+        enablePanDownToClose
+        backgroundColor="#fff"
+        onChange={(index) => setIsDailyStepsComponentOpen(typeof index === "number" && index >= 0)}
+        onDismiss={() => setIsDailyStepsComponentOpen(false)}
+      >
+     
+       <DailyStepsComponent />
+      </TrueSheet>
+
+      
+
+      </TrueSheet>
+
+
+
+
+
+
+
+
+
+
+        <TrueSheet
+        ref={register("EditNutritionGoals")}
+        sizes={["large"]}
+        cornerRadius={24}
+        enablePanDownToClose
+        backgroundColor="#fff"
+        onChange={(index) => setIsEditNutritionGoalsComponentOpen(typeof index === "number" && index >= 0)}
+        onDismiss={() => setIsEditNutritionGoalsComponentOpen(false)}
+      >
+     
+       <EditHabit_And_Nutrition_Goals />
+
+
+
+
+
+        <TrueSheet
+        ref={register("Generate_Based_On_Habits_AndHealth")}
+        sizes={["large"]}
+        cornerRadius={24}
+        enablePanDownToClose
+        backgroundColor="#fff"
+        onChange={(index) => setIsGenerate_Based_On_Habits_AndHealth(typeof index === "number" && index >= 0)}
+        onDismiss={() => setIsGenerate_Based_On_Habits_AndHealth(false)}
+      >
+     
+       <Generate_Based_On_Habits_AndHealth />
+      </TrueSheet>
+
+
+
+
+      </TrueSheet>
+
+
     </>
   );
 }

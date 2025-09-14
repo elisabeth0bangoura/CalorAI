@@ -31,6 +31,7 @@ const pctOfDayLeft = (d) => {
   if (now >= end)   return 0;
   return (end - now) / (end - start);
 };
+const pctOfDayElapsed = (d) => 1 - pctOfDayLeft(d);
 
 const toDateSafe = (raw) => {
   if (!raw) return null;
@@ -52,7 +53,7 @@ export default function InfiniteWeekCalendar({
   const ITEM_WIDTH    = SCREEN_WIDTH;
   const OUTER_PADDING = 16;
 
-  const RING   = 42;   // pill diameter (all pills identical)
+  const RING   = 42;   // pill diameter
   const CELL_H = 72;
   const GAP    = 25;
 
@@ -64,15 +65,20 @@ export default function InfiniteWeekCalendar({
   const firstCenter= (ITEM_WIDTH - contentW)/2 + RING/2;
   const hitW       = Math.max(RING + 24, step);
 
-  // virtual range
   const WINDOW = 10000, MIDDLE = WINDOW;
   const baseSunday = useMemo(() => startOfWeekSunday(new Date()), []);
 
-  // caches
   const [hasCalPerm, setHasCalPerm] = useState(null);
   const [eventsCache, setEventsCache] = useState({});
   const [entryCache,  setEntryCache]  = useState({});
   const [entryLoaded, setEntryLoaded] = useState({});
+
+  // tick updates the today ring as time passes
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick(t => t + 1), 30_000);
+    return () => clearInterval(id);
+  }, []);
 
   const initialIndex = useMemo(() => {
     const diffMs = startOfWeekSunday(selectedDate).getTime() - baseSunday.getTime();
@@ -97,7 +103,6 @@ export default function InfiniteWeekCalendar({
     const wkKey = ymd(startOfWeekSunday(weekStart));
     const days  = weekDays(weekStart);
 
-    // (kept) device events cache, but we won't render the dot anymore
     if (hasCalPerm && !eventsCache[wkKey]) {
       const ids = (await Calendar.getCalendarsAsync(Calendar.EntityTypes.EVENT)).map(c => c.id);
       const events = await Calendar.getEventsAsync(ids, weekStart, endOfDay(addDays(weekStart,6)));
@@ -110,7 +115,6 @@ export default function InfiniteWeekCalendar({
       setEventsCache(prev => ({ ...prev, [wkKey]: map }));
     }
 
-    // entries (supports created_at & createdAt)
     if (!entryLoaded[wkKey]) {
       const startTs = Timestamp.fromDate(weekStart);
       const endTs   = Timestamp.fromDate(endOfDay(addDays(weekStart,6)));
@@ -175,34 +179,21 @@ export default function InfiniteWeekCalendar({
             const isToday  = k === todayKey;
             const hasEntry = entriesByDay[k] === true;
 
-            // Colors
             const BLACK = "#000";
             const GREEN = "#39C463";
 
-            // Style priority:
-            // hasEntry => GREEN solid
-            // today & no entry => BLACK solid (+ progress INSIDE)
-            // else => BLACK dashed
-            let borderColor = GREEN, borderStyle = "solid";
+            // pill border: remove it for TODAY so the grey track is visible
+            let borderColor = GREEN, borderStyle = "solid", borderWidth = 1.5;
             if (hasEntry) {
-              borderColor = GREEN; borderStyle = "solid";
+              borderColor = GREEN; borderStyle = "solid"; borderWidth = 1.5;
             } else if (isToday) {
-              borderColor = BLACK; borderStyle = "solid";
+              borderColor = "transparent"; borderStyle = "solid"; borderWidth = 0; // <-- key change
             } else {
-              borderColor = BLACK; borderStyle = "dashed";
+              borderColor = BLACK; borderStyle = "dashed"; borderWidth = 1.5;
             }
 
-            // layout
             const centerX = firstCenter + i * step;
             const left    = Math.round(centerX - hitW / 2);
-
-            // Progress ring (INSIDE the pill so visual size stays the same)
-            const PROG_SIZE = RING;                 // same as pill
-            const R         = PROG_SIZE / 2;
-            const STROKE_W  = 2;                    // thin progress
-            const CIRC      = 2 * Math.PI * (R - STROKE_W / 2);
-            const progress  = isToday && !hasEntry ? pctOfDayLeft(new Date()) : 0; // show only when TODAY has NO entry
-            const dashOffset= CIRC * (1 - progress);
 
             return (
               <Pressable
@@ -222,7 +213,7 @@ export default function InfiniteWeekCalendar({
                     width: RING, height: RING, borderRadius: RING/2,
                     justifyContent: "center", alignItems: "center",
                     backgroundColor: "#fff",
-                    borderWidth: 1.5,
+                    borderWidth,
                     borderColor,
                     borderStyle,
                   }}
@@ -231,35 +222,51 @@ export default function InfiniteWeekCalendar({
                     {DAY[d.getDay()]}
                   </Text>
 
-                  {/* Progress for TODAY ONLY when there is NO entry */}
-                  {isToday && !hasEntry && (
+                  {/* TODAY ring */}
+                  {isToday && (
                     <Svg
-                      width={PROG_SIZE}
-                      height={PROG_SIZE}
+                      pointerEvents="none"
+                      width={RING}
+                      height={RING}
                       style={{ position: "absolute", top: 0, left: 0 }}
                     >
-                      <Circle
-                        cx={R}
-                        cy={R}
-                        r={R - STROKE_W / 2}
-                        stroke="#E8EDF2"
-                        strokeWidth={STROKE_W}
-                        fill="none"
-                      />
-                      <Circle
-                        cx={R}
-                        cy={R}
-                        r={R - STROKE_W / 2}
-                        stroke={BLACK}
-                        strokeWidth={STROKE_W}
-                        fill="none"
-                        strokeDasharray={`${CIRC} ${CIRC}`}
-                        strokeDashoffset={dashOffset}
-                        strokeLinecap="round"
-                        rotation={-90}
-                        originX={R}
-                        originY={R}
-                      />
+                      {(() => {
+                        const SIZE      = RING;
+                        const R         = SIZE / 2;
+                        const STROKE_W  = 3; // thicker so grey is obvious
+                        const rDraw     = R - STROKE_W / 2 - 0.5;
+                        const CIRC      = 2 * Math.PI * rDraw;
+
+                        const elapsed   = Math.max(0, Math.min(0.999, pctOfDayElapsed(new Date())));
+                        const dashOff   = CIRC * (1 - elapsed);
+
+                        return (
+                          <>
+                            {/* grey full track = time left */}
+                            <Circle
+                              cx={R}
+                              cy={R}
+                              r={rDraw}
+                              stroke="#E5E7EB"
+                              strokeWidth={STROKE_W}
+                              fill="none"
+                            />
+                            {/* black arc = elapsed */}
+                            <Circle
+                              cx={R}
+                              cy={R}
+                              r={rDraw}
+                              stroke="#000"
+                              strokeWidth={STROKE_W}
+                              fill="none"
+                              strokeDasharray={`${CIRC} ${CIRC}`}
+                              strokeDashoffset={dashOff}
+                              strokeLinecap="butt"
+                              transform={`rotate(-90 ${R} ${R})`}
+                            />
+                          </>
+                        );
+                      })()}
                     </Svg>
                   )}
                 </View>

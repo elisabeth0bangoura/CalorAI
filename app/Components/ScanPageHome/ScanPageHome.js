@@ -23,6 +23,10 @@ import { doc, getDoc, getFirestore, onSnapshot } from "@react-native-firebase/fi
 import LottieView from "lottie-react-native";
 import { CircularProgressBase } from "react-native-circular-progress-indicator";
 
+// ✅ expo-image for fast, cached images
+import { Image } from "expo-image";
+const AnimatedExpoImage = Animated.createAnimatedComponent(Image);
+
 /* ---------- Collapsing header sizes ---------- */
 const HEADER_MAX_HEIGHT = height(45);
 const HEADER_MIN_HEIGHT = height(2);
@@ -92,17 +96,14 @@ function changedSubset(a, b) {
   ];
   for (const k of keys) if (a[k] !== b[k]) return true;
 
-  // alternatives length
   const alA = a?.alternatives?.other_brands?.length ?? 0;
   const alB = b?.alternatives?.other_brands?.length ?? 0;
   if (alA !== alB) return true;
 
-  // ingredients length
   const ingA = a?.ingredients_full?.length ?? 0;
   const ingB = b?.ingredients_full?.length ?? 0;
   if (ingA !== ingB) return true;
 
-  // flags text / parts
   const aText = a?.profile_used?.text || a?.proms?.text || "";
   const bText = b?.profile_used?.text || b?.proms?.text || "";
   if (aText !== bText) return true;
@@ -127,9 +128,7 @@ function ScanPageHome() {
   const [page, setPage] = useState(0);
   const pagerX = useRef(new Animated.Value(0)).current;
 
-  // forces resubscribe + refetch when edit closes
   const [refreshVer, setRefreshVer] = useState(0);
-  // forces FlatList remount (so rows slide back in)
   const [listKey, setListKey] = useState(0);
 
   useEffect(() => {
@@ -178,10 +177,10 @@ function ScanPageHome() {
     extrapolate: "clamp",
   });
 
-  // NEW: top bar (gray "Scanned ...") is HIDDEN at top and slides in after a small scroll
+  // gray "Scanned ..." bar animation
   const topBarTranslateY = scrollY.interpolate({
     inputRange: [0, 24, 48],
-    outputRange: [-height(6), -height(6), 0], // fully hidden at top, slides in by ~48px
+    outputRange: [-height(6), -height(6), 0],
     extrapolate: "clamp",
   });
   const topBarOpacity = scrollY.interpolate({
@@ -192,13 +191,18 @@ function ScanPageHome() {
 
   const lastSnapRef = useRef(null);
 
-  // helper to map Firestore doc into our local shape
+  // expo-image prefetch for super fast first paint
+  useEffect(() => {
+    const url = currentItem?.image_cloud_url;
+    if (url) Image.prefetch(url).catch(() => {});
+  }, [currentItem?.image_cloud_url]);
+
+  // map Firestore doc
   const shapeFromDoc = (d) => {
     const title = sText(d.title, "Scanned meal");
     const brand = sText(d.brand, "");
     const caloriesTotal = Number.isFinite(sNum(d.calories_kcal_total, NaN)) ? sNum(d.calories_kcal_total, NaN) : null;
 
-    // Ingredients -> cards (rounded)
     const ingredients = Array.isArray(d.ingredients_full) ? d.ingredients_full : [];
     const ingredientCards = ingredients.map((ing) => {
       const kcal = Math.round(Number.isFinite(sNum(ing?.estimated_kcal, NaN)) ? sNum(ing?.estimated_kcal, 0) : 0);
@@ -232,7 +236,6 @@ function ScanPageHome() {
       });
     }
 
-    // Alternatives -> cards
     let alternativesCards = [];
     if (Array.isArray(d.alternatives_flat)) {
       alternativesCards = d.alternatives_flat.map((p) => ({
@@ -260,18 +263,11 @@ function ScanPageHome() {
       icon: "Utensils",
     }));
 
-    // --------- Personalized flags ----------
     const parts = (d?.proms && d.proms.parts) || d?.parts || {};
     const flagsParts = [];
-    if (typeof parts.kidney === "string" && parts.kidney) {
-      flagsParts.push({ key: "kidney", icon: "Droplets", color: "#0EA5E9", text: parts.kidney });
-    }
-    if (typeof parts.heart === "string" && parts.heart) {
-      flagsParts.push({ key: "heart", icon: "Heart", color: "#EF4444", text: parts.heart });
-    }
-    if (typeof parts.diabetes === "string" && parts.diabetes) {
-      flagsParts.push({ key: "diabetes", icon: "Syringe", color: "#7C3AED", text: parts.diabetes });
-    }
+    if (typeof parts.kidney === "string" && parts.kidney) flagsParts.push({ key: "kidney", icon: "Droplets", color: "#0EA5E9", text: parts.kidney });
+    if (typeof parts.heart === "string" && parts.heart) flagsParts.push({ key: "heart", icon: "Heart", color: "#EF4444", text: parts.heart });
+    if (typeof parts.diabetes === "string" && parts.diabetes) flagsParts.push({ key: "diabetes", icon: "Syringe", color: "#7C3AED", text: parts.diabetes });
     const flagsText = sText(d?.profile_used?.text || d?.proms?.text || "", "");
 
     return {
@@ -289,7 +285,7 @@ function ScanPageHome() {
     };
   };
 
-  /* Firestore live subscription (re-bound on refreshVer) */
+  /* Firestore live subscription */
   useEffect(() => {
     if (!isS8Open) return;
 
@@ -322,7 +318,7 @@ function ScanPageHome() {
     };
   }, [isS8Open, currentItemId, setCurrentItem, refreshVer]);
 
-  /* When edit sheet (s9) closes -> bump rings, reset list, force fetch + resubscribe */
+  /* When edit sheet closes -> refresh */
   useEffect(() => {
     if (isS9Open === false) {
       setRingBump((b) => b + 1);
@@ -341,12 +337,6 @@ function ScanPageHome() {
     }
   }, [isS9Open, currentItemId, setCurrentItem]);
 
-  /* Bump keys for page rings */
-  const bumpKeys = useMemo(
-    () => ({ protein: `protein-${ringBump}`, carbs: `carbs-${ringBump}`, fat: `fat-${ringBump}` }),
-    [ringBump]
-  );
-
   /* Pager */
   const pagerRef = useRef(null);
   const onPagerScroll = useMemo(
@@ -361,7 +351,6 @@ function ScanPageHome() {
     return () => pagerX.removeListener(sub);
   }, [pagerX, page, screenW]);
 
-  /* Little cards */
   const littleCards = useMemo(
     () => [
       { key: "fiber", label: "Fiber", amt: `${sNum(currentItem?.fiber_g, 0)}g`, value: sNum(currentItem?.fiber_g, 0), max: 30, color: "#22C55E" },
@@ -371,12 +360,10 @@ function ScanPageHome() {
     [currentItem?.fiber_g, currentItem?.sugar_g, currentItem?.sodium_mg]
   );
 
-  // ===== colors for alternatives
-  const MORE_COLOR = "#EF4444"; // red
-  const LESS_COLOR = "#22C55E"; // green
-  const SIMILAR_COLOR = "#000"; // gray
+  const MORE_COLOR = "#EF4444";
+  const LESS_COLOR = "#22C55E";
+  const SIMILAR_COLOR = "#000";
 
-  // ---- Animation store (no hooks inside renderItem)
   const animX = useRef(new Map()).current;
   const animOp = useRef(new Map()).current;
   const responders = useRef(new Map()).current;
@@ -399,7 +386,6 @@ function ScanPageHome() {
     panStartX.clear();
   };
 
-  // slide-out helper (translateX + fade) — deletes from UI after animation
   const slideOut = (id, onAfter) => {
     const x = getVal(animX, id, 0);
     const op = getVal(animOp, id, 1);
@@ -417,7 +403,6 @@ function ScanPageHome() {
     });
   };
 
-  // PanResponder per-row: reveal-only (no delete on swipe)
   const getPan = (id, x, op) => {
     if (responders.has(id)) return responders.get(id);
 
@@ -480,11 +465,9 @@ function ScanPageHome() {
     return r;
   };
 
-  // ---- helpers (top of file) ----
   const stripEmojiPrefix = (s = "") =>
     s.replace(/^\s*(?:[\p{Extended_Pictographic}\uFE0F\u200D]+)\s*/u, "").trim();
 
-  // Which icon to use per flag key
   const FLAG_ICON = {
     kidney: "Droplet",
     heart: "Heart",
@@ -493,7 +476,6 @@ function ScanPageHome() {
     stopSmoking: "Ban",
   };
 
-  // ---- inside your component ----
   const healthFlags = useMemo(() => {
     const parts =
       (currentItem?.proms && currentItem.proms.parts) ||
@@ -514,13 +496,12 @@ function ScanPageHome() {
       .filter(Boolean);
   }, [currentItem?.proms, currentItem?.parts]);
 
-  // Per-flag colors (bg = chip background, fg = icon color)
   const FLAG_COLORS = {
-    kidney:       { bg: "#EAF2FF", fg: "#1E67FF" }, // blue
-    heart:        { bg: "#FFECEF", fg: "#FE1B20" }, // red
-    diabetes:     { bg: "#FFF6E6", fg: "#F59E0B" }, // orange
-    reduceCoffee: { bg: "#F3E8FF", fg: "#7C3AED" }, // purple
-    stopSmoking:  { bg: "#ECFDF5", fg: "#059669" }, // teal/green
+    kidney:       { bg: "#EAF2FF", fg: "#1E67FF" },
+    heart:        { bg: "#FFECEF", fg: "#FE1B20" },
+    diabetes:     { bg: "#FFF6E6", fg: "#F59E0B" },
+    reduceCoffee: { bg: "#F3E8FF", fg: "#7C3AED" },
+    stopSmoking:  { bg: "#ECFDF5", fg: "#059669" },
   };
 
   const animation = useRef(null);
@@ -550,7 +531,6 @@ function ScanPageHome() {
         contentContainerStyle={{
           paddingTop: HEADER_MAX_HEIGHT - 32,
           paddingBottom: height(15),
-          // ensure at least full screen height so page is always 100%
           minHeight: screenH + HEADER_MAX_HEIGHT,
         }}
         scrollEventThrottle={16}
@@ -592,13 +572,7 @@ function ScanPageHome() {
             {/* Page 1 */}
             <View style={{ width: screenW }}>
               <View style={styles.caloriesCard}>
-                <View style={{
-                  borderRadius: 19,
-                  height: "100%",
-                  width: "100%",
-                  position: 'absolute',
-                  overflow: 'hidden'
-                }}>
+                <View style={{ borderRadius: 19, height: "100%", width: "100%", position: 'absolute', overflow: 'hidden' }}>
                   <LottieView
                     autoPlay
                     ref={animation}
@@ -607,20 +581,11 @@ function ScanPageHome() {
                     source={require("../../../assets/CaloriesBackground.json")}
                   />
                 </View>
-                <Text style={{
-                  marginTop: height(3),
-                  marginLeft: width(5),
-                  fontSize: size(18),
-                  fontWeight: "800",
-                }}>Calories</Text>
+                <Text style={{ marginTop: height(3), marginLeft: width(5), fontSize: size(18), fontWeight: "800" }}>
+                  Calories
+                </Text>
                 <View style={styles.caloriesRow}>
-                  <View style={{
-                    height: size(40),
-                    width: size(40),
-                    borderRadius: size(40) / 2,
-                    justifyContent: "center",
-                    alignItems: "center",
-                  }}>
+                  <View style={{ height: size(40), width: size(40), borderRadius: size(40) / 2, justifyContent: "center", alignItems: "center" }}>
                     <LucideIcons.Flame size={38} strokeWidth={3} color={"#000"} />
                   </View>
                   <Text style={styles.caloriesValue}>{currentItem?.calories_kcal_total}</Text>
@@ -637,7 +602,7 @@ function ScanPageHome() {
                     duration={800}
                     maxValue={200}
                     active={isS8Open}
-                    bumpKey={bumpKeys.protein}
+                    bumpKey={`protein-${ringBump}`}
                   />
                   <Text style={styles.amtText}>{p}g</Text>
                   <Text style={styles.capText}>Protein</Text>
@@ -652,7 +617,7 @@ function ScanPageHome() {
                     duration={800}
                     maxValue={200}
                     active={isS8Open}
-                    bumpKey={bumpKeys.carbs}
+                    bumpKey={`carbs-${ringBump}`}
                   />
                   <Text style={styles.amtText}>{c}g</Text>
                   <Text style={styles.capText}>Carbs</Text>
@@ -675,16 +640,10 @@ function ScanPageHome() {
               </View>
             </View>
 
-            {/* Page 2 — 90% card + THREE little cards with rings */}
+            {/* Page 2 */}
             <View style={{ width: screenW }}>
               <View style={styles.bigMetricCard}>
-                <View style={{
-                  borderRadius: 19,
-                  height: "100%",
-                  width: "100%",
-                  position: 'absolute',
-                  overflow: 'hidden'
-                }}>
+                <View style={{ borderRadius: 19, height: "100%", width: "100%", position: 'absolute', overflow: 'hidden' }}>
                   <LottieView
                     autoPlay
                     ref={animation}
@@ -694,20 +653,11 @@ function ScanPageHome() {
                   />
                 </View>
 
-                <Text style={{
-                  marginTop: height(3),
-                  marginLeft: width(5),
-                  fontSize: size(18),
-                  fontWeight: "800",
-                }}>Health Score</Text>
+                <Text style={{ marginTop: height(3), marginLeft: width(5), fontSize: size(18), fontWeight: "800" }}>
+                  Health Score
+                </Text>
                 <View style={styles.caloriesRow}>
-                  <View style={{
-                    height: size(40),
-                    width: size(40),
-                    borderRadius: size(40) / 2,
-                    justifyContent: "center",
-                    alignItems: "center",
-                  }}>
+                  <View style={{ height: size(40), width: size(40), borderRadius: size(40) / 2, justifyContent: "center", alignItems: "center" }}>
                     <LucideIcons.Heart size={38} strokeWidth={3} color={"#000"} />
                   </View>
                   <Text style={styles.caloriesValue}>{sNum(currentItem?.health_score, 0)}</Text>
@@ -716,7 +666,11 @@ function ScanPageHome() {
               </View>
 
               <View style={styles.ringsRow}>
-                {littleCards.map((it) => (
+                {[
+                  { key: "fiber", label: "Fiber", amt: `${sNum(currentItem?.fiber_g, 0)}g`, value: sNum(currentItem?.fiber_g, 0), max: 30, color: "#22C55E" },
+                  { key: "sugar", label: "Sugar", amt: `${sNum(currentItem?.sugar_g, 0)}g`, value: sNum(currentItem?.sugar_g, 0), max: 50, color: "#F7931A" },
+                  { key: "sodium", label: "Sodium", amt: `${sNum(currentItem?.sodium_mg, 0)}mg`, value: sNum(currentItem?.sodium_mg, 0), max: 2300, color: "#0058FF" },
+                ].map((it) => (
                   <View key={it.key} style={styles.tile3}>
                     <MiniRing
                       value={it.value}
@@ -743,14 +697,9 @@ function ScanPageHome() {
           </View>
         </View>
 
-        {/* ---------- Personalized flags card ---------- */}
+        {/* Personalized flags */}
         <View style={{ marginTop: height(8) }}>
-          <Text style={{
-            marginBottom: height(1),
-            marginLeft: width(5),
-            fontSize: size(18),
-            fontWeight: "800"
-          }}>
+          <Text style={{ marginBottom: height(1), marginLeft: width(5), fontSize: size(18), fontWeight: "800" }}>
             Personalized health checks
           </Text>
           <FlatList
@@ -760,21 +709,18 @@ function ScanPageHome() {
             showsHorizontalScrollIndicator={false}
             style={{ height: height(18) }}
             contentContainerStyle={{ paddingLeft: width(5), paddingRight: width(5) }}
-            // snapping
             decelerationRate="fast"
             snapToAlignment="start"
-            snapToInterval={SNAP}
+            snapToInterval={width(80) + width(5)}
             bounces={false}
-            // haptic when a new card snaps
             onMomentumScrollEnd={(e) => {
-              const i = Math.round(e.nativeEvent.contentOffset.x / SNAP);
+              const i = Math.round(e.nativeEvent.contentOffset.x / (width(80) + width(5)));
               if (i !== lastIndex.current) {
                 lastIndex.current = i;
                 Haptics.selectionAsync();
               }
             }}
-            // spacing between cards
-            ItemSeparatorComponent={() => <View style={{ width: GAP }} />}
+            ItemSeparatorComponent={() => <View style={{ width: width(5) }} />}
             renderItem={({ item }) => {
               const Icon = LucideIcons[item.icon] || LucideIcons.Info;
               const { bg, fg } = FLAG_COLORS[item.key] || { bg: "#F3F4F6", fg: "#111" };
@@ -782,7 +728,7 @@ function ScanPageHome() {
               return (
                 <View
                   style={{
-                    width: CARD_W,
+                    width: width(80),
                     marginRight: 0,
                     paddingVertical: 20,
                     height: height(13),
@@ -860,7 +806,7 @@ function ScanPageHome() {
 
             return (
               <View style={{ height: size(90), width: "100%" }}>
-                {/* Background trash button (revealed when swiped) */}
+                {/* Background trash */}
                 <View
                   style={{
                     position: "absolute",
@@ -996,24 +942,32 @@ function ScanPageHome() {
         />
       </Animated.ScrollView>
 
-      {/* Collapsing header image */}
+      {/* Collapsing header image — expo-image */}
       <Animated.View
         style={[
           styles.header,
           { transform: [{ translateY: headerTranslateY }] },
-          Platform.select({
-            ios: { shouldRasterizeIOS: true },
-            android: { renderToHardwareTextureAndroid: true },
-          }),
         ]}
+        shouldRasterizeIOS={Platform.OS === "ios"}
+        renderToHardwareTextureAndroid={Platform.OS === "android"}
       >
-        <Animated.Image
-          style={[styles.headerBackground, { opacity: imageOpacity, transform: [{ translateY: imageTranslateY }] }]}
-          source={{ uri: currentItem?.image_cloud_url }}
+        <AnimatedExpoImage
+          source={currentItem?.image_cloud_url ? { uri: currentItem.image_cloud_url } : undefined}
+          style={[
+            styles.headerBackground,
+            { opacity: imageOpacity, transform: [{ translateY: imageTranslateY }] },
+          ]}
+          contentFit="cover"
+          cachePolicy="disk"
+          priority="high"
+          allowDownscaling
+          transition={200}
+          placeholder={{ blurhash: "LEHV6nWB2yk8pyo0adR*.7kCMdnj" }}
+          onError={(e) => console.warn("image load error:", e?.nativeEvent)}
         />
       </Animated.View>
 
-      {/* Top title over header — hidden at top, slides in after a small scroll */}
+      {/* Top title over header */}
       <Animated.View
         style={[
           styles.headerTopTitle,
@@ -1088,24 +1042,7 @@ const styles = StyleSheet.create({
     }),
   },
 
-  caloriesLabel: { fontSize: size(17), fontWeight: "bold", marginLeft: width(5) },
   caloriesRow: { flexDirection: "row", alignItems: "center", marginTop: height(2), marginLeft: width(5) },
-  flameWrap: {
-    height: size(65),
-    width: size(65),
-    borderRadius: size(65) / 2,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "#222",
-  },
-  bigIconWrap: {
-    height: size(65),
-    width: size(65),
-    borderRadius: size(65) / 2,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "#222",
-  },
   caloriesValue: { fontSize: size(40), marginLeft: width(3), fontWeight: "700" },
 
   ringsRow: {
@@ -1136,33 +1073,6 @@ const styles = StyleSheet.create({
   amtText: { fontSize: size(18), fontWeight: "bold", marginTop: height(1), alignSelf: "center" },
   capText: { fontSize: size(14), fontWeight: "bold", marginTop: height(1), alignSelf: "center" },
 
-  /* Personalized flags styles */
-  flagsCard: {
-    width: "90%",
-    alignSelf: "center",
-    marginTop: height(3),
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: "#F1F3F9",
-    backgroundColor: "#fff",
-    ...Platform.select({
-      ios: { shadowColor: "#000", shadowOpacity: 0.04, shadowRadius: 8, shadowOffset: { width: 0, height: 0 } },
-      android: { elevation: 3, shadowColor: "#00000040" },
-    }),
-  },
-  flagRow: { flexDirection: "row", alignItems: "center", marginVertical: 6 },
-  flagIconWrap: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    alignItems: "center",
-    justifyContent: "center",
-    marginRight: 10,
-  },
-  flagText: { flex: 1, color: "#111", fontSize: size(15), fontWeight: "600", lineHeight: 20 },
-
   totalsHeader: { fontSize: size(18), marginTop: height(4), fontWeight: "800", marginLeft: width(5) },
 
   header: {
@@ -1178,7 +1088,6 @@ const styles = StyleSheet.create({
     position: "absolute",
     width: width(100),
     height: HEADER_MAX_HEIGHT,
-    resizeMode: "cover",
   },
   headerTopTitle: {
     marginTop: 0,

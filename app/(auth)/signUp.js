@@ -413,7 +413,7 @@ export default function SignUp() {
                     bottom: height(12),
                   }}
                 >
-                  <ChevronLeft size={25} color={"#000"} />
+                   <MoveLeft size={25} style={{   }} />
                 </TouchableOpacity>
               )
             )}

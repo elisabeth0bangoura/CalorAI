@@ -45,6 +45,9 @@ import {
   Wheat
 } from "lucide-react-native";
 
+
+
+
 /* ---------- Smooth, low-churn Ring (CircularProgressBase) ---------- */
 const Ring = memo(function Ring({
   value = 0,
@@ -73,6 +76,9 @@ const Ring = memo(function Ring({
     if (prev !== safeVal) setPrev(safeVal);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [safeVal]);
+
+
+  
 
   return (
     <CircularProgressBase
@@ -968,6 +974,7 @@ export default function Home() {
   const { setCurrentItemId, setCurrentItem } = useCurrentScannedItemId();
   const { present } = useSheets();
 
+  
   const { targets } = useDailyTargets();
   const { left, today } = useDailyLeft();
 
@@ -992,9 +999,12 @@ export default function Home() {
     }, ms);
   }, [sheetsBusy]);
 
+
+
+
   // Hard stop animations if a sheet opens
   useEffect(() => {
-    if (sheetsBusy && animateTimer.current) {
+    if (sheetsBusy && animateTimer.current) {s
       clearTimeout(animateTimer.current);
       animateTimer.current = null;
       setAnimateRings(false);

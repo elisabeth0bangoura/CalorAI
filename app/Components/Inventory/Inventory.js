@@ -11,13 +11,13 @@ import {
 } from "@react-native-firebase/firestore";
 import { Image } from "expo-image";
 import LottieView from "lottie-react-native";
-import { ClockFading, Minus, Plus } from "lucide-react-native";
+import { Minus, Plus } from "lucide-react-native";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Animated, FlatList, Platform, ScrollView, Text, TouchableOpacity, View } from "react-native";
 import CircularProgress from "react-native-circular-progress-indicator";
 import { height, size, width } from "react-native-responsive-sizes";
 import { useSheets } from "../../Context/SheetsContext";
-import useOpenAIRecipes from "./useOpenAIRecipes";
+import { default as RecipesScreen, default as useOpenAIRecipes } from "./useOpenAIRecipes";
 
 /* ----------------- tiny helpers (same style as Scan_Food_Camera) ----------------- */
 const toNum = (n, d = 0) => {
@@ -746,7 +746,14 @@ export default function Inventory() {
             Cook With What You Have
           </Text>
 
-          <FlatList
+          <RecipesScreen />
+
+       
+       
+
+       {
+        /*
+             <FlatList
             showsHorizontalScrollIndicator={false}
             horizontal
             data={ramenRecipes}
@@ -803,6 +810,9 @@ export default function Inventory() {
             onEndReachedThreshold={0.6}
             ListFooterComponent={recipesLoading ? <ActivityIndicator style={{ marginRight: 12 }} /> : null}
           />
+
+        */
+       }
         </View>
       </ScrollView>
     </View>
