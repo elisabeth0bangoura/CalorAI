@@ -1,11 +1,15 @@
 // app/(auth)/Pages/HealthSetupScreen.js
 import { useEditNutrition } from "@/app/Context/EditNutritionContext";
 import { Picker } from "@react-native-picker/picker";
-import { memo, useMemo } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { Platform, Pressable, ScrollView, Switch, Text, TextInput, View } from "react-native";
 import { height, size, width } from "react-native-responsive-sizes";
 import AppBlurHeader2 from "./AppBlurHeader2";
 import DesiredWeight from "./DesiredWeight";
+
+/* --- RN Firebase v22 modular --- */
+import { getAuth } from "@react-native-firebase/auth";
+import { doc, getFirestore, onSnapshot } from "@react-native-firebase/firestore";
 
 /* show the goal-weight picker only for these */
 const WEIGHT_GOALS = new Set(["lose", "maintain", "gain"]);
@@ -190,7 +194,30 @@ const HeightWeightComponent = memo(function HeightWeightComponent() {
     weightUnit, setWeightUnit,
   } = useEditNutrition();
 
-  const isMetric = unitSystem === "metric";
+  // Firestore-driven unitSystem
+  const [fsUnitSystem, setFsUnitSystem] = useState(null); // "metric" | "imperial" | null (unknown)
+
+  useEffect(() => {
+    const uid = getAuth().currentUser?.uid;
+    if (!uid) return;
+    const ref = doc(getFirestore(), "users", uid);
+    const unsub = onSnapshot(ref, (snap) => {
+      if (!snap.exists()) return;
+      const us = snap.get("unitSystem"); // expected "metric" | "imperial"
+      if (us === "metric" || us === "imperial") {
+        setFsUnitSystem(us);
+        // keep context aligned (no styling change)
+        if (us !== unitSystem) {
+          setUnitSystem(us);
+          setWeightUnit(us === "metric" ? "kg" : "lb");
+        }
+      }
+    });
+    return () => unsub();
+  }, [setUnitSystem, setWeightUnit, unitSystem]);
+
+  // If Firestore has a value, it is the source of truth; otherwise fall back to context
+  const isMetric = (fsUnitSystem ?? unitSystem) === "metric";
 
   const feetItems  = useMemo(() => range(4, 7).map((v) => ({ label: `${v} ft`, value: v })), []);
   const inchItems  = useMemo(() => range(0, 11).map((v) => ({ label: `${v} in`, value: v })), []);
@@ -201,11 +228,8 @@ const HeightWeightComponent = memo(function HeightWeightComponent() {
   const wheelFontSize = size(22);
   const headerFontSize = size(15);
 
-  const toggleUnits = () => {
-    const next = isMetric ? "imperial" : "metric";
-    setUnitSystem(next);
-    setWeightUnit(next === "metric" ? "kg" : "lb");
-  };
+  // Switch remains visible (styling unchanged) but user toggles won't change FS-driven value
+  const noop = () => {};
 
   return (
    <View style={{ height: "100%", width: "100%" }}>
@@ -224,7 +248,7 @@ const HeightWeightComponent = memo(function HeightWeightComponent() {
         This will be used to calibrate your custom plan.
       </Text>
 
-      {/* Unit switch */}
+      {/* Unit switch (display-only; value comes from Firestore) */}
       <View style={{ width: "100%", alignItems: "center", marginTop: height(8) }}>
         <View style={{ flexDirection: "row", alignItems: "center", columnGap: 12 }}>
           <Text style={{ fontSize: size(14), fontWeight: "800", color: isMetric ? "#D0D3DA" : "#111" }}>
@@ -234,7 +258,7 @@ const HeightWeightComponent = memo(function HeightWeightComponent() {
             trackColor={{ false: "#E6E6E8", true: "#0057FF" }}
             thumbColor="#fff"
             ios_backgroundColor="#E6E6E8"
-            onValueChange={toggleUnits}
+            onValueChange={noop}
             value={isMetric}
             style={{ transform: [{ scale: 0.9 }] }}
           />
@@ -339,9 +363,6 @@ const HeightWeightComponent = memo(function HeightWeightComponent() {
   );
 });
 
-
-
-
 /* ---------- Screen (multi-select aware) ---------- */
 export default function HeightWeightPage({ goalId, goalIds }) {
   const {
@@ -366,18 +387,12 @@ export default function HeightWeightPage({ goalId, goalIds }) {
   const showCoffee   = showAll || ids.includes("reduceCoffee");
   const showSmoking  = showAll || ids.includes("stopSmoking");
 
- 
-  
   return (
     <>
-
-
       <ScrollView
         style={{ height: "100%", width: "100%", backgroundColor: "#fff" }}
         contentContainerStyle={{ paddingBottom: height(20) }}
       >
-      
-
         {/* Inline Height & Weight wheels */}
         <View style={{ width: "90%", alignSelf: "center", marginTop: height(2), marginBottom: height(2) }}>
           <HeightWeightComponent />

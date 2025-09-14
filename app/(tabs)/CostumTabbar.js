@@ -15,6 +15,10 @@ import PageAfterScan_FoodLabel from "../Components/Camera/PageAfterScan/PageAfte
 import EditMyWeight from "../Components/EditMyWeight/EditMyWeight";
 import EditHabit_And_Nutrition_Goals from "../Components/Profile/EditHabit_And_Nutrition_Goals/EditHabit_And_Nutrition_Goals";
 import Generate_Based_On_Habits_AndHealth from "../Components/Profile/EditHabit_And_Nutrition_Goals/Generate_Based_On_Habits_AndHealth/Generate_Based_On_Habits_AndHealth";
+import Habits_Weight_History from "../Components/Profile/Habits_Weight_History/Habits_Weight_History";
+import Add_Burned_Calories from "../Components/Profile/Preferences/Add_Burned_Calories";
+import AutoAdjustMacros from "../Components/Profile/Preferences/AutoAdjustMacros";
+import RolloverCalories from "../Components/Profile/Preferences/RolloverCalories";
 import BirthDay from "../Components/Profile/Profile/BirthDay";
 import CurrentWeight from "../Components/Profile/Profile/CurrentWeight";
 import DailyStepsComponent from "../Components/Profile/Profile/DailyStepsSelector";
@@ -24,6 +28,14 @@ import TargetWeight from "../Components/Profile/Profile/TargetWeight";
 import ScanPageHome from "../Components/ScanPageHome/ScanPageHome";
 import { useCameraActive } from "../Context/CameraActiveContext";
 import { useSheets } from "../Context/SheetsContext";
+
+
+
+
+
+
+
+
 
 
 
@@ -64,6 +76,11 @@ export default function SheetsHost() {
     setIsEditNutritionGoalsComponentOpen,
     isGenerate_Based_On_Habits_AndHealth, 
     setIsGenerate_Based_On_Habits_AndHealth,
+    isHabits_Weight_History,
+    setIsHabits_Weight_History,
+    isAdd_Burned_Calories, setIsAdd_Burned_Calories,
+    isRolloverCalories, setIsRolloverCalories,
+    isAutoAdjustMacros, setIsAutoAdjustMacros
   } = useSheets();
 
   const { activeKey } = useCameraActive();
@@ -83,10 +100,14 @@ export default function SheetsHost() {
   useEffect(() => { console.log("[SheetsHost] DailyStepsComponentOpen open ->", isDailyStepsComponentOpen); }, [isDailyStepsComponentOpen]);
   useEffect(() => { console.log("[SheetsHost] EditNutritionGoalsComponentOpen open ->", isEditNutritionGoalsComponentOpen); }, [isEditNutritionGoalsComponentOpen]);
   useEffect(() => { console.log("[SheetsHost] Generate_Based_On_Habits_AndHealth open ->", isGenerate_Based_On_Habits_AndHealth); }, [isGenerate_Based_On_Habits_AndHealth]);
+  useEffect(() => { console.log("[SheetsHost] Habits_Weight_History open ->", isHabits_Weight_History); }, [isHabits_Weight_History]);
+  useEffect(() => { console.log("[SheetsHost] Add_Burned_Calories open ->", isAdd_Burned_Calories); }, [isAdd_Burned_Calories]);
+  useEffect(() => { console.log("[SheetsHost] RolloverCalories open ->", isRolloverCalories); }, [isRolloverCalories]);
+  useEffect(() => { console.log("[SheetsHost] AutoAdjustMacros open ->", isAutoAdjustMacros); }, [isAutoAdjustMacros]);
 
 
 
-
+        
 
   
 
@@ -437,6 +458,87 @@ export default function SheetsHost() {
 
 
       </TrueSheet>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        <TrueSheet
+        ref={register("Habits_Weight_History")}
+        sizes={["large"]}
+        cornerRadius={24}
+        enablePanDownToClose
+        backgroundColor="#fff"
+        onChange={(index) => setIsHabits_Weight_History(typeof index === "number" && index >= 0)}
+        onDismiss={() => setIsHabits_Weight_History(false)}
+      >
+     
+       <Habits_Weight_History />
+      </TrueSheet>
+
+
+
+
+
+
+
+
+
+       <TrueSheet
+        ref={register("Add_Burned_Calories")}
+        sizes={["large"]}
+        cornerRadius={24}
+        enablePanDownToClose
+        backgroundColor="#fff"
+        onChange={(index) => setIsAdd_Burned_Calories(typeof index === "number" && index >= 0)}
+        onDismiss={() => setIsAdd_Burned_Calories(false)}
+      >
+       <Add_Burned_Calories />
+      </TrueSheet>
+
+
+
+
+          <TrueSheet
+        ref={register("RolloverCalories")}
+        sizes={["large"]}
+        cornerRadius={24}
+        enablePanDownToClose
+        backgroundColor="#fff"
+        onChange={(index) => setIsRolloverCalories(typeof index === "number" && index >= 0)}
+        onDismiss={() => setIsRolloverCalories(false)}
+      >
+       <RolloverCalories />
+      </TrueSheet>
+
+
+
+
+        <TrueSheet
+        ref={register("AutoAdjustMacros")}
+        sizes={["large"]}
+        cornerRadius={24}
+        enablePanDownToClose
+        backgroundColor="#fff"
+        onChange={(index) => setIsAutoAdjustMacros(typeof index === "number" && index >= 0)}
+        onDismiss={() => setIsAutoAdjustMacros(false)}
+      >
+       <AutoAdjustMacros />
+      </TrueSheet>
+
+
+
 
 
     </>

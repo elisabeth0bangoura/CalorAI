@@ -148,7 +148,9 @@ export default function Profile() {
 
 
 
-     <TouchableOpacity 
+     <TouchableOpacity onPress={() => {
+        present("Habits_Weight_History")
+    }}
      style={{
         width: "90%",
         flexDirection: 'row',
@@ -164,7 +166,7 @@ export default function Profile() {
             fontSize: size(15),
             fontWeight: "700"
         }}>
-         Habits & weight history
+         Habits & Weight history
         </Text>
     </TouchableOpacity>
 
@@ -196,7 +198,11 @@ export default function Profile() {
 
 
 
-    <TouchableOpacity style={{
+
+    <TouchableOpacity onPress={() => {
+        present("Add_Burned_Calories")
+    }}
+    style={{
         width: "90%",
         marginLeft: width(5),
         paddingVertical: 12,
@@ -236,7 +242,10 @@ export default function Profile() {
 
 
 
-    <TouchableOpacity style={{
+    <TouchableOpacity onPress={() => {
+        present("RolloverCalories")
+    }}
+    style={{
         width: "90%",
         marginLeft: width(5),
         paddingVertical: 12,
@@ -282,7 +291,10 @@ export default function Profile() {
 
 
 
-    <TouchableOpacity style={{
+    <TouchableOpacity onPress={() => {
+        present("AutoAdjustMacros")
+    }}
+    style={{
         width: "90%",
         marginLeft: width(5),
         paddingVertical: 12,

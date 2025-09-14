@@ -30,9 +30,15 @@ export function SheetsProvider({ children }) {
  const [isDailyStepsComponentOpen, setIsDailyStepsComponentOpen] = useState(false)
  const [isEditNutritionGoalsComponentOpen, setIsEditNutritionGoalsComponentOpen] = useState(false)
  const [isGenerate_Based_On_Habits_AndHealth, setIsGenerate_Based_On_Habits_AndHealth] = useState(false)
+ const [isHabits_Weight_History, setIsHabits_Weight_History] = useState(false)
+
+ const [isAdd_Burned_Calories, setIsAdd_Burned_Calories] = useState(false)
+ const [isRolloverCalories, setIsRolloverCalories] = useState(false)
+ const [isAutoAdjustMacros, setIsAutoAdjustMacros] = useState(false)
 
 
-  
+
+ 
 
 
   // ---- Central flag switcher
@@ -58,10 +64,11 @@ export function SheetsProvider({ children }) {
       case "DailyStepsComponent": return setIsDailyStepsComponentOpen(open);
       case "EditNutritionGoalsComponent": return setIsEditNutritionGoalsComponentOpen(open);
       case "Generate_Based_On_Habits_AndHealth": return setIsGenerate_Based_On_Habits_AndHealth(open);
-      
+      case "Habits_Weight_History": return setIsHabits_Weight_History(open);
+      case "Add_Burned_Calories": return setIsAdd_Burned_Calories(open);
+      case "RolloverCalories": return setIsRolloverCalories(open);
+      case "AutoAdjustMacros": return setIsAutoAdjustMacros(open);
 
-    
- 
       default: return;
     }
   };
@@ -105,7 +112,12 @@ export function SheetsProvider({ children }) {
       isBirthDayComponentOpen, setIsBirthDayComponentOpen,
       isDailyStepsComponentOpen, setIsDailyStepsComponentOpen,
       isEditNutritionGoalsComponentOpen, setIsEditNutritionGoalsComponentOpen,
-      isGenerate_Based_On_Habits_AndHealth, setIsGenerate_Based_On_Habits_AndHealth
+      isGenerate_Based_On_Habits_AndHealth, setIsGenerate_Based_On_Habits_AndHealth,
+      isHabits_Weight_History, setIsHabits_Weight_History,
+      isAdd_Burned_Calories, setIsAdd_Burned_Calories,
+      isRolloverCalories, setIsRolloverCalories,
+      isAutoAdjustMacros, setIsAutoAdjustMacros
+ 
     }),
     [
       isS1Open, 
@@ -134,6 +146,12 @@ export function SheetsProvider({ children }) {
       setIsEditNutritionGoalsComponentOpen,
       isGenerate_Based_On_Habits_AndHealth, 
       setIsGenerate_Based_On_Habits_AndHealth,
+      isHabits_Weight_History, setIsHabits_Weight_History,
+      isAdd_Burned_Calories, setIsAdd_Burned_Calories,
+      isRolloverCalories, setIsRolloverCalories,
+      isAutoAdjustMacros, setIsAutoAdjustMacros
+ 
+ 
     ]
   );
 
