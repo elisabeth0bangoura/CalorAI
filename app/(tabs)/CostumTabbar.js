@@ -1,7 +1,7 @@
 // app/Sheets/SheetsHost.js
 import { TrueSheet } from "@lodev09/react-native-true-sheet";
 import { Check, ChevronLeft } from "lucide-react-native";
-import React, { memo, useEffect, useMemo } from "react";
+import React, { memo, useEffect, useMemo, useState } from "react";
 import { Button as RNButton, Text, TouchableOpacity, View } from "react-native";
 import { height, size, width } from "react-native-responsive-sizes";
 
@@ -16,6 +16,9 @@ import EditMyWeight from "../Components/EditMyWeight/EditMyWeight";
 import EditHabit_And_Nutrition_Goals from "../Components/Profile/EditHabit_And_Nutrition_Goals/EditHabit_And_Nutrition_Goals";
 import Generate_Based_On_Habits_AndHealth from "../Components/Profile/EditHabit_And_Nutrition_Goals/Generate_Based_On_Habits_AndHealth/Generate_Based_On_Habits_AndHealth";
 import Habits_Weight_History from "../Components/Profile/Habits_Weight_History/Habits_Weight_History";
+import Delete_Account from "../Components/Profile/More/Delete_Account";
+import Privacy_Policy from "../Components/Profile/More/Privacy_Policy";
+import Termms_Conditions from "../Components/Profile/More/Termms_Conditions";
 import Add_Burned_Calories from "../Components/Profile/Preferences/Add_Burned_Calories";
 import AutoAdjustMacros from "../Components/Profile/Preferences/AutoAdjustMacros";
 import RolloverCalories from "../Components/Profile/Preferences/RolloverCalories";
@@ -28,12 +31,6 @@ import TargetWeight from "../Components/Profile/Profile/TargetWeight";
 import ScanPageHome from "../Components/ScanPageHome/ScanPageHome";
 import { useCameraActive } from "../Context/CameraActiveContext";
 import { useSheets } from "../Context/SheetsContext";
-
-
-
-
-
-
 
 
 
@@ -80,8 +77,16 @@ export default function SheetsHost() {
     setIsHabits_Weight_History,
     isAdd_Burned_Calories, setIsAdd_Burned_Calories,
     isRolloverCalories, setIsRolloverCalories,
-    isAutoAdjustMacros, setIsAutoAdjustMacros
+    isAutoAdjustMacros, setIsAutoAdjustMacros,
+    isTermms_Conditions, setIsTermms_Conditions,
+    isPrivacy_Policy, setIsPrivacy_Policy,
+     isEmail_Support, setIsEmail_Support,
+     isDelete_Account, setIsDelete_Account,
+   isLogIn, setIsLogIn
   } = useSheets();
+
+
+    const [isEmailSupportOpen, setIsEmailSupportOpen] = useState(false);
 
   const { activeKey } = useCameraActive();
 
@@ -104,10 +109,16 @@ export default function SheetsHost() {
   useEffect(() => { console.log("[SheetsHost] Add_Burned_Calories open ->", isAdd_Burned_Calories); }, [isAdd_Burned_Calories]);
   useEffect(() => { console.log("[SheetsHost] RolloverCalories open ->", isRolloverCalories); }, [isRolloverCalories]);
   useEffect(() => { console.log("[SheetsHost] AutoAdjustMacros open ->", isAutoAdjustMacros); }, [isAutoAdjustMacros]);
+  useEffect(() => { console.log("[SheetsHost] Termms_Conditions open ->", isTermms_Conditions); }, [isTermms_Conditions]);
+  useEffect(() => { console.log("[SheetsHost] Privacy_Policy open ->", isPrivacy_Policy); }, [isPrivacy_Policy]);
+  useEffect(() => { console.log("[SheetsHost] Email_Support open ->", isEmail_Support); }, [isEmail_Support]);
+  useEffect(() => { console.log("[SheetsHost] Delete_Account open ->", isDelete_Account); }, [isDelete_Account]);
+  useEffect(() => { console.log("[SheetsHost] LogIn open ->", isLogIn); }, [isLogIn]);
 
 
 
-        
+  
+
 
   
 
@@ -536,6 +547,74 @@ export default function SheetsHost() {
       >
        <AutoAdjustMacros />
       </TrueSheet>
+
+
+
+
+
+
+
+      {/* Profile -> More */}
+
+
+        <TrueSheet
+        ref={register("Termms_Conditions")}
+        sizes={["large"]}
+        cornerRadius={24}
+        enablePanDownToClose
+        backgroundColor="#fff"
+        onChange={(index) => setIsTermms_Conditions(typeof index === "number" && index >= 0)}
+        onDismiss={() => setIsTermms_Conditions(false)}
+      >
+       <Termms_Conditions />
+      </TrueSheet>
+
+
+
+
+
+        <TrueSheet
+        ref={register("Privacy_Policy")}
+        sizes={["large"]}
+        cornerRadius={24}
+        enablePanDownToClose
+        backgroundColor="#fff"
+        onChange={(index) => setIsPrivacy_Policy(typeof index === "number" && index >= 0)}
+        onDismiss={() => setIsPrivacy_Policy(false)}
+      >
+       <Privacy_Policy />
+      </TrueSheet>
+
+
+
+
+
+
+
+
+
+        <TrueSheet
+        ref={register("Delete_Account")}
+        sizes={["large"]}
+        cornerRadius={24}
+        enablePanDownToClose
+        backgroundColor="#fff"
+        onChange={(index) => setIsDelete_Account(typeof index === "number" && index >= 0)}
+        onDismiss={() => setIsDelete_Account(false)}
+      >
+       <Delete_Account />
+      </TrueSheet>
+
+
+
+
+
+
+
+
+
+
+
 
 
 

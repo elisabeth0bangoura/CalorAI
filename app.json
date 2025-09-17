@@ -10,14 +10,17 @@
     "newArchEnabled": true,
     "ios": {
       "usesAppleSignIn": true,
-      "UIBackgroundModes": [
-        "audio"
-      ],
       "googleServicesFile": "./GoogleService-Info.plist",
       "NSCameraUsageDescription": "We need the camera to scan your fridge.",
       "supportsTablet": true,
       "bundleIdentifier": "com.CalorAI",
-      "appleTeamId": "544MXZ2RC2"
+      "appleTeamId": "544MXZ2RC2",
+      "infoPlist": {
+        "UIBackgroundModes": [
+          "audio",
+          "remote-notification"
+        ]
+      }
     },
     "android": {
       "googleServicesFile": "./google-services.json",
@@ -62,12 +65,6 @@
         }
       ],
       [
-        "expo-calendar",
-        {
-          "calendarPermission": "The app needs to access your calendar."
-        }
-      ],
-      [
         "expo-camera",
         {
           "cameraPermission": "Allow $(PRODUCT_NAME) to access your camera",
@@ -100,13 +97,15 @@
       ],
       "expo-apple-authentication",
       "@react-native-firebase/app",
-      "@react-native-firebase/auth"
+      "@react-native-firebase/auth",
+      "expo-mail-composer"
     ],
     "experiments": {
       "typedRoutes": true
     },
     "extra": {
       "router": {},
+       "oneSignalAppId": "d9c8472c-8b91-451f-9789-8d0b3bd8737c",
       "eas": {
         "projectId": "50d7c022-6770-4ddc-9828-b2c78e68a3c1"
       }

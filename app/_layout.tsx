@@ -33,6 +33,7 @@ function AppShell() {
   const { isPremium, loading } = useRevenueCat();
   const [showPaywall, setShowPaywall] = useState(false);
 
+  
   // Decide when to show/hide the paywall
   useEffect(() => {
     if (!loading) {
@@ -40,6 +41,8 @@ function AppShell() {
       setShowPaywall(!isPremium);
     }
   }, [loading, isPremium]);
+
+  
 
   return (
     <View style={{ flex: 1 }}>

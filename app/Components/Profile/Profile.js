@@ -1,6 +1,7 @@
 import { useSheets } from "@/app/Context/SheetsContext";
 import { Image } from "expo-image";
 import { Flame, Goal, Handshake, HatGlasses, History, LineChart, Mail, RefreshCcw, Trash2, UserRound } from "lucide-react-native";
+
 import {
     LogBox,
     ScrollView,
@@ -9,10 +10,8 @@ import {
     View
 } from "react-native";
 import { height, size, width } from "react-native-responsive-sizes";
+import { OpenSupportEmail } from "../Profile/More/Email_Support";
 import SignOutButton from "./SignOutButton";
-
-
-
 
 
 export default function Profile() {
@@ -20,16 +19,6 @@ export default function Profile() {
   LogBox.ignoreAllLogs(true);
   const {
     register, present, dismiss, dismissAll,
-    isS2Open, setIsS2Open,
-    isS3Open, setIsS3Open,
-    isS4Open, setIsS4Open,
-    isS5Open, setIsS5Open,
-    isS6Open, setIsS6Open,
-    isS7Open, setIsS7Open,
-    isS8Open, setIsS8Open,
-    isS9Open, setIsS9Open,
-   isPerosnalDetailsOpen, setIsPerosnalDetailsOpen,
-   isTargetWeightOpen, setIsTargetWeightOpen,
   } = useSheets();
 
 
@@ -363,7 +352,10 @@ style={{
 }}>
 
 
-<TouchableOpacity style={{
+<TouchableOpacity  onPress={() => {
+        present("Termms_Conditions")
+    }}
+style={{
     backgroundColor: "#F1F3F9",
     height: size(170),
     width: size(160),
@@ -395,7 +387,10 @@ style={{
 
 
 
-<TouchableOpacity style={{
+<TouchableOpacity onPress={() => {
+        present("Privacy_Policy")
+    }}
+ style={{
     backgroundColor: "#F1F3F9",
     height: size(170),
     width: size(160),
@@ -430,7 +425,8 @@ style={{
 
 
 
-<TouchableOpacity style={{
+<TouchableOpacity  onPress={OpenSupportEmail}
+style={{
     backgroundColor: "#F1F3F9",
     height: size(170),
     width: size(160),
@@ -477,7 +473,10 @@ style={{
 
 
 
-<TouchableOpacity style={{
+<TouchableOpacity  onPress={() => {
+        present("Delete_Account")
+    }}
+style={{
     backgroundColor: "#F1F3F9",
     height: size(170),
     width: size(160),
@@ -538,7 +537,7 @@ style={{
             height: size(30),
             width: size(30),
         }}> 
-        <Image source={require("../../../assets/App_Logo_grey_Color.png")}
+        <Image source={require("../../../assets/Logo_Icon.png")}
         style={{
             height: "100%",
             width: "100%"

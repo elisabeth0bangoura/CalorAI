@@ -12,6 +12,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useCameraActive } from "@/app/Context/CameraActiveContext";
 import { useSheets } from "@/app/Context/SheetsContext";
 
+import { useMarkLoggedToday } from "@/app/_layout";
 import BarcodeCamera from "./Cameras/BarcodeCamera";
 import FoodLabelCamera from "./Cameras/FoodLabelCamera";
 import InventoryCamera from "./Cameras/InventoryCamera";
@@ -36,6 +37,10 @@ export default function CameraCarouselScroll() {
   const [slotW, setSlotW] = useState(MIN_SLOT);
   const [pagerScrollEnabled, setPagerScrollEnabled] = useState(true);
   const measuredWidths = useRef({});
+  const markLoggedToday = useMarkLoggedToday();
+
+
+
 
   const PAGES = useMemo(
     () => [
@@ -110,27 +115,51 @@ export default function CameraCarouselScroll() {
     if (PAGES[i]?.key) setActiveKey(PAGES[i].key);
   };
 
-  const onShutter = async () => {
-    const ref = pageRefs.current[index];
-    const key = PAGES[index]?.key;
-    const hasScan = !!ref?.scan;
 
-    console.log("[Camera] Shutter pressed ->", { index, key, hasScan });
 
-    if (hasScan) {
-      try {
-        await ref.scan();
-        console.log("[Camera] scan() completed for", key);
-      } catch (e) {
-        console.log("[Camera] scan() ERROR for", key, e?.message || e);
-      }
-    } else {
-      console.log(
-        "[Camera] No scan() exposed by component. Make sure this page is forwardRef + useImperativeHandle.",
-        { key }
-      );
+
+
+const inFlight = useRef(false);
+
+const onShutter = useCallback(async () => {
+  const ref = pageRefs.current[index];
+  const key = PAGES[index]?.key;
+
+  if (!ref?.scan) {
+    console.log("[Camera] No scan() exposed by component.", { key });
+    return;
+  }
+  if (inFlight.current) {
+    console.log("[Camera] Ignored: shutter in flight");
+    return;
+  }
+
+  inFlight.current = true;
+  console.log("[Camera] Shutter pressed ->", { index, key });
+
+  try {
+    // 1) Scan
+    const result = await ref.scan(); // whatever your scan returns
+    console.log("[Camera] scan() completed for", key, { hasResult: !!result });
+
+    // 2) Save (only if you’re not saving inside scan())
+    if (result) {
+      await saveMealToDb(result); // or use your existing formData instead of result
+      console.log("✅ Saved meal");
     }
-  };
+
+    // 3) Tag for OneSignal segment
+    await markLoggedToday();
+    console.log("✅ Tagged last_log_date");
+  } catch (e) {
+    console.log("[Camera] scan/save/tag ERROR for", key, e?.message || e);
+  } finally {
+    inFlight.current = false;
+  }
+}, [index, markLoggedToday]);
+
+
+
 
   // Only mount the active page when S2 is open and S3 is closed
   const shouldMount = (i) => isS2Open && !isS3Open && i === index;   // ← NEW: gated by isS2Open

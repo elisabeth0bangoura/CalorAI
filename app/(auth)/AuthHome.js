@@ -1,4 +1,5 @@
 // app/(auth)/AuthHome.jsx
+import { TrueSheet } from "@lodev09/react-native-true-sheet";
 import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
@@ -12,9 +13,20 @@ import auth from "@react-native-firebase/auth";
 import firestore from "@react-native-firebase/firestore";
 
 import { ChevronRight } from "lucide-react-native";
+import { useSheets } from "../Context/SheetsContext";
 import AppBlurBottom from "./AppBlurBottom";
 import { googleSignIn } from "./GoogleSignUp/googleSignIn";
+import LogIn from "./Login";
 import { signUpWithApple } from "./signUpWithApple";
+
+
+
+
+
+
+
+
+
 
 export default function AuthHome() {
   globalThis.RNFB_SILENCE_MODULAR_DEPRECATION_WARNINGS = true;
@@ -22,6 +34,14 @@ export default function AuthHome() {
   const router = useRouter();
   const [loading, setLoading] = useState({ apple: false, google: false, email: false });
   const lottieRef = useRef(null);
+
+
+   const {
+    register, present, dismiss, dismissAll,
+   isLogIn, setIsLogIn
+  } = useSheets();
+
+
 
   const tap = async (fn) => {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -91,6 +111,22 @@ export default function AuthHome() {
   });
 
   return (
+
+    <>
+    
+        <TrueSheet
+        ref={register("LogIn")}
+        sizes={[height(32)]}
+        cornerRadius={24}
+        enablePanDownToClose
+        backgroundColor="#fff"
+        onChange={(index) => setIsLogIn(typeof index === "number" && index >= 0)}
+        onDismiss={() => setIsLogIn(false)}
+      >
+       <LogIn />
+      </TrueSheet>
+
+
     <View style={{ height: "100%", width: "100%", backgroundColor: "#fff" }}>
       <StatusBar style="dark" />
 
@@ -184,7 +220,9 @@ export default function AuthHome() {
         </TouchableOpacity>
 
         <TouchableOpacity
-          onPressIn={onEmail}
+          onPressIn={() => {
+            present("LogIn")
+          }}
           style={{
             height: size(60),
             right: width(0),
@@ -210,5 +248,12 @@ export default function AuthHome() {
 
       <AppBlurBottom />
     </View>
+
+
+
+
+
+
+    </>
   );
 }

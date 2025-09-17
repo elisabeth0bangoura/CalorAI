@@ -35,10 +35,16 @@ export function SheetsProvider({ children }) {
  const [isAdd_Burned_Calories, setIsAdd_Burned_Calories] = useState(false)
  const [isRolloverCalories, setIsRolloverCalories] = useState(false)
  const [isAutoAdjustMacros, setIsAutoAdjustMacros] = useState(false)
+ const [isTermms_Conditions, setIsTermms_Conditions] = useState(false)
+ const [isPrivacy_Policy, setIsPrivacy_Policy] = useState(false)
+ const [isEmail_Support, setIsEmail_Support] = useState(false)
+ const [isDelete_Account, setIsDelete_Account] = useState(false)
+ const [isLogIn, setIsLogIn] = useState(false)
 
 
 
- 
+
+          
 
 
   // ---- Central flag switcher
@@ -68,7 +74,14 @@ export function SheetsProvider({ children }) {
       case "Add_Burned_Calories": return setIsAdd_Burned_Calories(open);
       case "RolloverCalories": return setIsRolloverCalories(open);
       case "AutoAdjustMacros": return setIsAutoAdjustMacros(open);
+      case "Termms_Conditions": return setIsTermms_Conditions(open);
+      case "Privacy_Policy": return setIsPrivacy_Policy(open);
+      case "Email_Support": return setIsEmail_Support(open);
+      case "Email_Support": return setIsDelete_Account(open);
+      case "LogIn": return setIsLogIn(open);
 
+
+   
       default: return;
     }
   };
@@ -116,8 +129,12 @@ export function SheetsProvider({ children }) {
       isHabits_Weight_History, setIsHabits_Weight_History,
       isAdd_Burned_Calories, setIsAdd_Burned_Calories,
       isRolloverCalories, setIsRolloverCalories,
-      isAutoAdjustMacros, setIsAutoAdjustMacros
- 
+      isAutoAdjustMacros, setIsAutoAdjustMacros,
+      isTermms_Conditions, setIsTermms_Conditions,
+      isPrivacy_Policy, setIsPrivacy_Policy,
+      isEmail_Support, setIsEmail_Support,
+       isDelete_Account, setIsDelete_Account,
+     isLogIn, setIsLogIn,
     }),
     [
       isS1Open, 
@@ -149,9 +166,12 @@ export function SheetsProvider({ children }) {
       isHabits_Weight_History, setIsHabits_Weight_History,
       isAdd_Burned_Calories, setIsAdd_Burned_Calories,
       isRolloverCalories, setIsRolloverCalories,
-      isAutoAdjustMacros, setIsAutoAdjustMacros
- 
- 
+      isAutoAdjustMacros, setIsAutoAdjustMacros,
+      isTermms_Conditions, setIsTermms_Conditions,
+      isPrivacy_Policy, setIsPrivacy_Policy,
+      isEmail_Support, setIsEmail_Support,
+     isDelete_Account, setIsDelete_Account,
+     isLogIn, setIsLogIn
     ]
   );
 

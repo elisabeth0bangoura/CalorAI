@@ -31,7 +31,6 @@
         <category android:name="android.intent.category.BROWSABLE"/>
         <data android:scheme="calorai"/>
         <data android:scheme="exp+calorai"/>
-        <data android:scheme="calorAI"/>
       </intent-filter>
     </activity>
   </application>

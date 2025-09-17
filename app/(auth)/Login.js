@@ -1,23 +1,19 @@
-import { useRouter } from 'expo-router';
-import { StatusBar } from 'expo-status-bar';
-import { ArrowRight } from 'lucide-react-native';
-import 'moment/locale/de';
-import { useEffect, useState } from 'react';
-import { Keyboard, KeyboardAvoidingView, Platform, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native';
-import { MMKV } from 'react-native-mmkv';
-import { height, size, width } from 'react-native-responsive-sizes';
-
-// Firebase (modular)
 import { getAuth, signInWithEmailAndPassword } from '@react-native-firebase/auth';
 import { collection, doc, getDocs, getFirestore, serverTimestamp, setDoc } from '@react-native-firebase/firestore';
-
-// Your existing OAuth helpers
-import { googleSignIn } from './GoogleSignUp/googleSignIn'; // <-- path relative to THIS file
-import { signUpWithApple } from './signUpWithApple'; // <-- path relative to THIS file
+import { Image } from 'expo-image';
+import { useRouter } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
+import 'moment/locale/de';
+import { useEffect, useRef, useState } from 'react';
+import { Text, TouchableOpacity, View } from 'react-native';
+import { MMKV } from 'react-native-mmkv';
+import { height, size, width } from 'react-native-responsive-sizes';
+import { useSheets } from '../Context/SheetsContext';
+import { googleSignIn } from './GoogleSignUp/googleSignIn';
+import { signUpWithApple } from './signUpWithApple';
 
 const storage = new MMKV();
 
-/* Preload images into MMKV (unchanged) */
 const preloadAccountImages = async (uid) => {
   try {
     const snapshot = await getDocs(collection(getFirestore(), 'users', uid, 'AccountImages'));
@@ -37,6 +33,7 @@ const preloadAccountImages = async (uid) => {
 export default function LogIn() {
   const router = useRouter();
   const auth = getAuth();
+  const { dismiss } = useSheets();
 
   const [Email, setEmail] = useState('');
   const [Password, setPassword] = useState('');
@@ -45,6 +42,13 @@ export default function LogIn() {
 
   const fullText = 'Your space to test ideas, get feedback, and move fast.';
   const [displayedText, setDisplayedText] = useState('');
+
+  const animationRef = useRef(null);
+
+  useEffect(() => {
+    animationRef.current?.play();
+    animationRef.current?.play(30, 120);
+  }, []);
 
   useEffect(() => {
     let index = 0;
@@ -71,6 +75,7 @@ export default function LogIn() {
     }
     storage.set('lastLoggedInUser', uid);
     await preloadAccountImages(uid);
+    dismiss('LogIn');
     router.replace('/(tabs)');
   };
 
@@ -88,15 +93,14 @@ export default function LogIn() {
     }
   };
 
-  // --- Google login (uses your existing helper which already upserts users/{uid})
   const handleGoogleLogin = async () => {
     setErrText('');
     setBusy(true);
     try {
-      const { uid } = await googleSignIn(); // your helper handles setDoc(...provider:'google')
+      const { uid } = await googleSignIn();
       await afterLogin(uid);
     } catch (e) {
-      if (e?.message === 'canceled') return; // user cancelled
+      if (e?.message === 'canceled') return;
       setErrText(e?.message || 'Google sign-in failed.');
       console.error('Google login error:', e);
     } finally {
@@ -104,17 +108,14 @@ export default function LogIn() {
     }
   };
 
-  // --- Apple login (call your helper, then upsert users/{uid})
   const handleAppleLogin = async () => {
     setErrText('');
     setBusy(true);
     try {
-      const userCred = await signUpWithApple(); // returns Firebase UserCredential
+      const userCred = await signUpWithApple();
       const user = userCred?.user;
       const uid = user?.uid;
       if (!uid) throw new Error('No uid from Apple login.');
-
-      // Upsert minimal profile in Firestore (provider: 'apple')
       await setDoc(
         doc(getFirestore(), 'users', uid),
         {
@@ -129,7 +130,6 @@ export default function LogIn() {
         },
         { merge: true }
       );
-
       await afterLogin(uid);
     } catch (e) {
       if (e?.name === 'APPLE_SIGNIN_CANCELED' || e?.message === 'canceled') return;
@@ -143,179 +143,95 @@ export default function LogIn() {
   return (
     <>
       <StatusBar style="dark" />
-      <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
-        <View style={{ height: '100%', width: '100%', backgroundColor: '#FFCF2E' }}>
-          <KeyboardAvoidingView
-            style={{ flex: 1, alignItems: 'center', backgroundColor: '#FFCF2E' }}
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      <View style={{ height: '100%', width: '100%', backgroundColor: '#fff' }}>
+        <Text
+          style={{
+            fontSize: size(20),
+            marginTop: height(4),
+            alignSelf: 'center',
+            color: '#000',
+            zIndex: 1000,
+            fontWeight: '800',
+          }}
+        >
+          Log In
+        </Text>
+
+        <View
+          style={{
+            width: '90%',
+            position: 'absolute',
+            marginTop: height(8),
+            alignSelf: 'center',
+            zIndex: 1000,
+            top: height(6),
+          }}
+        >
+          <TouchableOpacity
+            disabled={busy}
+            onPress={handleGoogleLogin}
+            style={{
+              width: width(90),
+              alignSelf: 'center',
+              borderRadius: 15,
+              borderWidth: 1,
+              height: size(60),
+              flexDirection: 'row',
+              borderColor: '#ddd',
+              paddingVertical: 14,
+              justifyContent: 'center',
+              alignItems: 'center',
+              marginBottom: height(2),
+              backgroundColor: '#fff',
+            }}
           >
-            <View style={{ height: '100%', width: '100%', backgroundColor: '#fff' }}>
-              <Text
-                style={{
-                  fontSize: size(28),
-                  marginTop: height(9),
-                  marginLeft: width(5),
-                  width: width(80),
-                  color: '#000',
-                  zIndex: 1000,
-                  fontFamily: 'PlayfairDisplay-Bold',
-                }}
-              >
-                Log In
-              </Text>
-
-              <View style={{ height: 70, width: '90%' }}>
-                <Text
-                  style={{
-                    fontSize: size(16),
-                    marginTop: height(2),
-                    marginLeft: width(5),
-                    color: '#222',
-                    zIndex: 1000,
-                    fontFamily: 'Open-Sans',
-                  }}
-                >
-                  {displayedText}
-                </Text>
-              </View>
-
-              {!!errText && (
-                <Text
-                  style={{
-                    color: '#C00',
-                    marginLeft: width(5),
-                    marginTop: height(1),
-                    fontSize: size(14),
-                  }}
-                >
-                  {errText}
-                </Text>
-              )}
-
-              {/* Email */}
-              <TextInput
-                placeholder="E-Mail"
-                keyboardType="email-address"
-                autoCapitalize="none"
-                autoCorrect={false}
-                onChangeText={setEmail}
-                value={Email}
-                editable={!busy}
-                style={{
-                  borderWidth: 1,
-                  borderColor: '#222',
-                  width: width(90),
-                  alignSelf: 'center',
-                  textAlign: 'center',
-                  marginTop: height(3),
-                  borderRadius: 10,
-                  height: height(6),
-                  fontSize: size(16),
-                  paddingHorizontal: width(5),
-                }}
-              />
-
-              {/* Password */}
-              <TextInput
-                placeholder="Password"
-                onChangeText={setPassword}
-                value={Password}
-                secureTextEntry={true}
-                editable={!busy}
-                style={{
-                  borderWidth: 1,
-                  borderColor: '#222',
-                  width: width(90),
-                  fontSize: size(16),
-                  alignSelf: 'center',
-                  marginTop: height(2),
-                  textAlign: 'center',
-                  borderRadius: 10,
-                  height: height(6),
-                  paddingHorizontal: width(5),
-                }}
-              />
-
-              {/* Email/password login */}
-              <TouchableOpacity
-                disabled={busy}
-                onPress={handleLogin}
-                style={{
-                  paddingVertical: 16,
-                  paddingHorizontal: 24,
-                  marginTop: height(3),
-                  alignSelf: 'center',
-                  flexDirection: 'row',
-                  borderRadius: 10,
-                  backgroundColor: busy ? '#444' : '#222',
-                  shadowColor: '#000',
-                  shadowOffset: { width: 0, height: 3 },
-                  shadowOpacity: 0.14,
-                  shadowRadius: 8.27,
-                  elevation: 10,
-                }}
-              >
-                <Text
-                  style={{
-                    fontSize: size(16),
-                    fontFamily: 'PlayfairDisplay-Bold',
-                    color: '#fff',
-                  }}
-                >
-                  Next
-                </Text>
-                <ArrowRight color={'#fff'} size={size(22)} style={{ marginLeft: width(2) }} />
-              </TouchableOpacity>
-
-              {/* Divider */}
-              <View style={{ alignItems: 'center', marginVertical: height(3) }}>
-                <Text style={{ color: '#666' }}>or continue with</Text>
-              </View>
-
-              {/* Google */}
-              <TouchableOpacity
-                disabled={busy}
-                onPress={handleGoogleLogin}
-                style={{
-                  width: width(90),
-                  alignSelf: 'center',
-                  borderRadius: 10,
-                  borderWidth: 1,
-                  borderColor: '#ddd',
-                  paddingVertical: 14,
-                  alignItems: 'center',
-                  marginBottom: height(1.5),
-                  backgroundColor: '#fff',
-                }}
-              >
-                <Text style={{ fontSize: size(16), color: '#111', fontWeight: '700' }}>
-                  Continue with Google
-                </Text>
-              </TouchableOpacity>
-
-              {/* Apple (iOS only — your helper throws on Android) */}
-              <TouchableOpacity
-                disabled={busy}
-                onPress={handleAppleLogin}
-                style={{
-                  width: width(90),
-                  alignSelf: 'center',
-                  borderRadius: 10,
-                  borderWidth: 1,
-                  borderColor: '#ddd',
-                  paddingVertical: 14,
-                  alignItems: 'center',
-                  backgroundColor: '#000',
-                }}
-              >
-                <Text style={{ fontSize: size(16), color: '#fff', fontWeight: '700' }}>
-                  Continue with Apple
-                </Text>
-              </TouchableOpacity>
+            <View
+              style={{
+                height: size(20),
+                width: size(20),
+                alignItems: 'center',
+                marginRight: width(4),
+                justifyContent: 'center',
+              }}
+            >
+              <Image source={require('../../assets/brands/google.png')} style={{ height: '100%', width: '100%' }} />
             </View>
-          </KeyboardAvoidingView>
+            <Text style={{ fontSize: size(16), color: '#111', fontWeight: '700' }}>Continue with Google</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            disabled={busy}
+            onPress={handleAppleLogin}
+            style={{
+              width: width(90),
+              alignSelf: 'center',
+              height: size(60),
+              borderRadius: 15,
+              borderWidth: 1,
+              borderColor: '#ddd',
+              flexDirection: 'row',
+              paddingVertical: 14,
+              alignItems: 'center',
+              justifyContent: 'center',
+              backgroundColor: '#000',
+            }}
+          >
+            <View
+              style={{
+                height: size(20),
+                width: size(20),
+                alignItems: 'center',
+                marginRight: width(4),
+                justifyContent: 'center',
+              }}
+            >
+              <Image source={require('../../assets/brands/Apple.png')} style={{ height: '100%', width: '100%' }} />
+            </View>
+
+            <Text style={{ fontSize: size(16), color: '#fff', fontWeight: '700' }}>Continue with Apple</Text>
+          </TouchableOpacity>
         </View>
-      </TouchableWithoutFeedback>
+      </View>
     </>
   );
 }
