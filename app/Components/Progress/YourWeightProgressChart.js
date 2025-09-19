@@ -41,7 +41,7 @@ const toDate = (v) =>
 /* ---------- component ---------- */
 export default function WeightProgressChart({
   heightPx = 180,
-  range = '90d', // 👈 parent passes "20d" | "90d" | "1Y" | "All"
+  range = '90d',
 }) {
   const uid = getAuth().currentUser?.uid;
 
@@ -51,33 +51,47 @@ export default function WeightProgressChart({
   // Normalize incoming prop to a valid range object
   const selected = useMemo(() => {
     const key = String(range || '').trim();
-    // Allow case-insensitive: "20D" -> "20d"
     const found =
       RANGES.find(r => r.key.toLowerCase() === key.toLowerCase()) ||
       RANGES.find(r => r.key === '90d');
     return found;
   }, [range]);
 
-  // Debug: confirm we receive the prop
   useEffect(() => {
-    // You should see this every time parent changes `range`
-    console.log('[WeightProgressChart] range prop ->', range, 'selected ->', selected);
+    console.log('[WeightProgressChart] range ->', range, 'selected ->', selected);
   }, [range, selected]);
 
   /* stream weight history */
   useEffect(() => {
     if (!uid) return;
     const db = getFirestore();
-    const qy = query(collection(db, 'users', uid, 'weightprogrss'), orderBy('createdAt', 'asc'));
-    const unsub = onSnapshot(qy, (snap) => {
-      const rows = snap.docs.map(d => {
-        const x = d.data() || {};
-        const t = toDate(x.createdAt);
-        const kg = Number.isFinite(+x.kg) ? +x.kg : Number.isFinite(+x.lb) ? +x.lb * KG_PER_LB : NaN;
-        return t && Number.isFinite(kg) ? { timestamp: t.getTime(), value: kg } : null;
-      }).filter(Boolean);
-      setAllPoints(rows);
-    });
+    const qy = query(
+      collection(db, 'users', uid, 'weightprogress'), // 👈 fixed typo
+      orderBy('createdAt', 'asc')
+    );
+    const unsub = onSnapshot(
+      qy,
+      (snap) => {
+        const docs = snap?.docs ?? [];
+        const rows = docs
+          .map(d => {
+            const x = d.data() || {};
+            const t = toDate(x.createdAt);
+            const kg = Number.isFinite(+x.kg)
+              ? +x.kg
+              : Number.isFinite(+x.lb)
+              ? +x.lb * KG_PER_LB
+              : NaN;
+            return t && Number.isFinite(kg) ? { timestamp: t.getTime(), value: kg } : null;
+          })
+          .filter(Boolean);
+        setAllPoints(rows);
+      },
+      (err) => {
+        console.warn('[WeightProgressChart] onSnapshot error:', err?.message || err);
+        setAllPoints([]); // safe fallback
+      }
+    );
     return () => unsub?.();
   }, [uid]);
 
@@ -94,13 +108,15 @@ export default function WeightProgressChart({
           ? +u.goalWeightLb * KG_PER_LB
           : null;
         setGoalKg(g);
-      } catch {}
+      } catch (e) {
+        console.warn('[WeightProgressChart] getDoc error:', e?.message || e);
+      }
     })();
   }, [uid]);
 
   /* helpers */
   const hasDataFor = (r) => {
-    if (!r?.days) return allPoints.length > 0; // All
+    if (!r?.days) return allPoints.length > 0;
     const cutoff = Date.now() - r.days * MS_DAY;
     return allPoints.some(p => p.timestamp >= cutoff);
   };

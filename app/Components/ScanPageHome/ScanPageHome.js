@@ -20,7 +20,6 @@ import { useSheets } from "@/app/Context/SheetsContext";
 import { getAuth } from "@react-native-firebase/auth";
 import { doc, getDoc, getFirestore, onSnapshot } from "@react-native-firebase/firestore";
 
-import LottieView from "lottie-react-native";
 import { CircularProgressBase } from "react-native-circular-progress-indicator";
 
 // ✅ expo-image for fast, cached images
@@ -572,21 +571,13 @@ function ScanPageHome() {
             {/* Page 1 */}
             <View style={{ width: screenW }}>
               <View style={styles.caloriesCard}>
-                <View style={{ borderRadius: 19, height: "100%", width: "100%", position: 'absolute', overflow: 'hidden' }}>
-                  <LottieView
-                    autoPlay
-                    ref={animation}
-                    style={{ width: 500, height: 500 }}
-                    contentFit="contain"
-                    source={require("../../../assets/CaloriesBackground.json")}
-                  />
-                </View>
-                <Text style={{ marginTop: height(3), marginLeft: width(5), fontSize: size(18), fontWeight: "800" }}>
+             
+                <Text style={{ marginTop: height(3), marginLeft: width(5), color: "#fff", fontSize: size(18), fontWeight: "800" }}>
                   Calories
                 </Text>
                 <View style={styles.caloriesRow}>
                   <View style={{ height: size(40), width: size(40), borderRadius: size(40) / 2, justifyContent: "center", alignItems: "center" }}>
-                    <LucideIcons.Flame size={38} strokeWidth={3} color={"#000"} />
+                    <LucideIcons.Flame size={38} strokeWidth={3} color={"#fff"} />
                   </View>
                   <Text style={styles.caloriesValue}>{currentItem?.calories_kcal_total}</Text>
                 </View>
@@ -643,25 +634,17 @@ function ScanPageHome() {
             {/* Page 2 */}
             <View style={{ width: screenW }}>
               <View style={styles.bigMetricCard}>
-                <View style={{ borderRadius: 19, height: "100%", width: "100%", position: 'absolute', overflow: 'hidden' }}>
-                  <LottieView
-                    autoPlay
-                    ref={animation}
-                    style={{ width: 500, height: 500 }}
-                    contentFit="contain"
-                    source={require("../../../assets/HealthScoreBackground.json")}
-                  />
-                </View>
+               
 
-                <Text style={{ marginTop: height(3), marginLeft: width(5), fontSize: size(18), fontWeight: "800" }}>
+                <Text style={{ marginTop: height(3), color: "#fff", marginLeft: width(5), fontSize: size(18), fontWeight: "800" }}>
                   Health Score
                 </Text>
                 <View style={styles.caloriesRow}>
                   <View style={{ height: size(40), width: size(40), borderRadius: size(40) / 2, justifyContent: "center", alignItems: "center" }}>
-                    <LucideIcons.Heart size={38} strokeWidth={3} color={"#000"} />
+                    <LucideIcons.Heart size={38} strokeWidth={3} color={"#fff"} />
                   </View>
                   <Text style={styles.caloriesValue}>{sNum(currentItem?.health_score, 0)}</Text>
-                  <Text style={{ fontSize: size(20), fontWeight: "700", marginLeft: width(1) }}>/10</Text>
+<Text style={{ fontSize: size(20), color: "#fff", fontWeight: "700", marginLeft: width(1) }}>/ 10</Text>
                 </View>
               </View>
 
@@ -951,20 +934,18 @@ function ScanPageHome() {
         shouldRasterizeIOS={Platform.OS === "ios"}
         renderToHardwareTextureAndroid={Platform.OS === "android"}
       >
-        <AnimatedExpoImage
-          source={currentItem?.image_cloud_url ? { uri: currentItem.image_cloud_url } : undefined}
-          style={[
-            styles.headerBackground,
-            { opacity: imageOpacity, transform: [{ translateY: imageTranslateY }] },
-          ]}
-          contentFit="cover"
-          cachePolicy="disk"
-          priority="high"
-          allowDownscaling
-          transition={200}
-          placeholder={{ blurhash: "LEHV6nWB2yk8pyo0adR*.7kCMdnj" }}
-          onError={(e) => console.warn("image load error:", e?.nativeEvent)}
-        />
+       <AnimatedExpoImage
+        source={currentItem?.image_cloud_url ? { uri: currentItem.image_cloud_url } : undefined}
+        style={[
+          styles.headerBackground,
+          { opacity: imageOpacity, transform: [{ translateY: imageTranslateY }] },
+        ]}
+        pointerEvents="none"   // 👈 important
+        contentFit="cover"
+        cachePolicy="disk"
+        priority="high"
+      />
+
       </Animated.View>
 
       {/* Top title over header */}
@@ -1021,7 +1002,7 @@ const styles = StyleSheet.create({
     height: height(16),
     borderWidth: 1,
     borderColor: "#F1F3F9",
-    backgroundColor: "#fff",
+    backgroundColor: "#151515",
     ...Platform.select({
       ios: { shadowColor: "#555", shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.04, shadowRadius: 10 },
       android: { elevation: 5, shadowColor: "#00000050" },
@@ -1035,7 +1016,7 @@ const styles = StyleSheet.create({
     height: height(16),
     borderWidth: 1,
     borderColor: "#F1F3F9",
-    backgroundColor: "#fff",
+    backgroundColor: "#151515",
     ...Platform.select({
       ios: { shadowColor: "#555", shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.04, shadowRadius: 10 },
       android: { elevation: 5, shadowColor: "#00000050" },
@@ -1043,7 +1024,7 @@ const styles = StyleSheet.create({
   },
 
   caloriesRow: { flexDirection: "row", alignItems: "center", marginTop: height(2), marginLeft: width(5) },
-  caloriesValue: { fontSize: size(40), marginLeft: width(3), fontWeight: "700" },
+  caloriesValue: { fontSize: size(40), color: "#fff", marginLeft: width(3), fontWeight: "700" },
 
   ringsRow: {
     flexDirection: "row",

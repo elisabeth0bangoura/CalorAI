@@ -40,8 +40,9 @@ export function SheetsProvider({ children }) {
  const [isEmail_Support, setIsEmail_Support] = useState(false)
  const [isDelete_Account, setIsDelete_Account] = useState(false)
  const [isLogIn, setIsLogIn] = useState(false)
+ const [isHome_Add_Widget, setIsHome_Add_Widget] = useState(false)
 
-
+  
 
 
           
@@ -79,6 +80,7 @@ export function SheetsProvider({ children }) {
       case "Email_Support": return setIsEmail_Support(open);
       case "Email_Support": return setIsDelete_Account(open);
       case "LogIn": return setIsLogIn(open);
+      case "Home_Add_Widget": return setIsHome_Add_Widget(open);
 
 
    
@@ -135,6 +137,7 @@ export function SheetsProvider({ children }) {
       isEmail_Support, setIsEmail_Support,
        isDelete_Account, setIsDelete_Account,
      isLogIn, setIsLogIn,
+      isHome_Add_Widget, setIsHome_Add_Widget
     }),
     [
       isS1Open, 
@@ -171,7 +174,8 @@ export function SheetsProvider({ children }) {
       isPrivacy_Policy, setIsPrivacy_Policy,
       isEmail_Support, setIsEmail_Support,
      isDelete_Account, setIsDelete_Account,
-     isLogIn, setIsLogIn
+     isLogIn, setIsLogIn,
+      isHome_Add_Widget, setIsHome_Add_Widget
     ]
   );
 

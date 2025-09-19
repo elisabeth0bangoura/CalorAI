@@ -257,6 +257,8 @@ export default forwardRef(function InventoryCamera(
   const {
     setImageUrl,
     setCloudUrl,
+     imageUrl,
+      cloudUrl,
     setResult,
     setRaw,
     addLog,
@@ -287,6 +289,12 @@ export default forwardRef(function InventoryCamera(
     didRegister.current = true;
     register("s3", (props) => <PageAfterScan_Add_To_Inventory {...props} />);
   }, [register]);
+
+
+  useEffect(() => {
+      console.log("cloudUrl ", cloudUrl)
+       console.log("cloudUrl ", cloudUrl)
+  }, [cloudUrl])
 
   const cameraRef = useRef(null);
   const autoOnce = useRef(false);
@@ -550,8 +558,8 @@ ${schema}
         proms,                        // 👈 saved
         profile_used: proms?.profile_used || null, // 👈 saved
 
-        image_local_uri: null,
-        image_cloud_url: cloudUrl || null,
+        image_local_uri: imageUrl,
+        image_cloud_url: cloudUrl,
         scanned_at_pretty: formatScannedAt?.() || null,
         expirationDate:
           (expirationDate && String(expirationDate)) ||

@@ -12,7 +12,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useCameraActive } from "@/app/Context/CameraActiveContext";
 import { useSheets } from "@/app/Context/SheetsContext";
 
-import { useMarkLoggedToday } from "@/app/_layout";
+
 import BarcodeCamera from "./Cameras/BarcodeCamera";
 import FoodLabelCamera from "./Cameras/FoodLabelCamera";
 import InventoryCamera from "./Cameras/InventoryCamera";
@@ -37,8 +37,8 @@ export default function CameraCarouselScroll() {
   const [slotW, setSlotW] = useState(MIN_SLOT);
   const [pagerScrollEnabled, setPagerScrollEnabled] = useState(true);
   const measuredWidths = useRef({});
-  const markLoggedToday = useMarkLoggedToday();
 
+  
 
 
 
@@ -149,14 +149,14 @@ const onShutter = useCallback(async () => {
     }
 
     // 3) Tag for OneSignal segment
-    await markLoggedToday();
+
     console.log("✅ Tagged last_log_date");
   } catch (e) {
     console.log("[Camera] scan/save/tag ERROR for", key, e?.message || e);
   } finally {
     inFlight.current = false;
   }
-}, [index, markLoggedToday]);
+}, [index]);
 
 
 

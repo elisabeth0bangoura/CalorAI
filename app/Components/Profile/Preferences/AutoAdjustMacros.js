@@ -65,23 +65,38 @@ export default function AutoAdjustMacros() {
 
   useEffect(() => {
     const uid = getAuth().currentUser?.uid;
-    if (!uid) return;
+    if (!uid) {
+      setItems([]);
+      setLoading(false);
+      return;
+    }
 
     const db = getFirestore();
 
-    // Subscribe to user doc (weightUnit + AutoAdjustMacros)
-    const unsubUser = onSnapshot(doc(db, "users", uid), (snap) => {
-      const data = snap.data() || {};
+    // Subscribe to user doc (weightUnit + AutoAdjustMacros) — guarded
+    const unsubUser = onSnapshot(
+      doc(db, "users", uid),
+      (snap) => {
+        try {
+          if (!snap || !snap.exists || typeof snap.data !== "function") return;
+          const data = snap.data() || {};
 
-      if (data?.weightUnit === "kg" || data?.weightUnit === "lb") {
-        setWeightUnit((prev) => (prev === data.weightUnit ? prev : data.weightUnit));
-      }
+          const wu = data?.weightUnit;
+          if (wu === "kg" || wu === "lb") {
+            setWeightUnit((prev) => (prev === wu ? prev : wu));
+          }
 
-      if (data?.AutoAdjustMacros === "yes") setIsEnabled(true);
-      else if (data?.AutoAdjustMacros === "no") setIsEnabled(false);
-    });
+          const aam = data?.AutoAdjustMacros;
+          if (aam === "yes") setIsEnabled(true);
+          else if (aam === "no") setIsEnabled(false);
+        } catch (e) {
+          console.warn("[AutoAdjustMacros user onSnapshot] data() failed:", e?.message || e);
+        }
+      },
+      (err) => console.warn("[AutoAdjustMacros user onSnapshot] error:", err?.message || err)
+    );
 
-    // (Optional) Subscribe to weights – unchanged from your base file
+    // (Optional) Subscribe to weights – guarded
     const qRef = query(
       collection(db, "users", uid, "weightprogrss"),
       orderBy("createdAt", "desc")
@@ -90,33 +105,51 @@ export default function AutoAdjustMacros() {
     const unsubList = onSnapshot(
       qRef,
       (snap) => {
-        const next = snap.docs.map((d) => {
-          const data = d.data() || {};
-          const createdAt =
-            data.createdAt && typeof data.createdAt.toDate === "function"
-              ? data.createdAt.toDate()
-              : null;
-          return {
-            id: d.id,
-            kg: typeof data.kg === "number" ? data.kg : undefined,
-            lb: typeof data.lb === "number" ? data.lb : undefined,
-            unit: data.unit,
-            source: data.source,
-            createdAt,
-          };
-        });
-        setItems(next);
-        setLoading(false);
+        try {
+          const docs = Array.isArray(snap?.docs) ? snap.docs : [];
+          const next = docs.map((d) => {
+            let data = {};
+            try {
+              data = typeof d?.data === "function" ? (d.data() || {}) : {};
+            } catch (e) {
+              console.warn("[AutoAdjustMacros weights map] d.data() failed:", e?.message || e);
+            }
+
+            // tolerant createdAt parsing
+            let createdAt = null;
+            const raw = data?.createdAt;
+            if (raw) {
+              if (typeof raw?.toDate === "function") createdAt = raw.toDate();
+              else if (raw instanceof Date) createdAt = raw;
+              else if (typeof raw === "number") createdAt = new Date(raw);
+            }
+
+            return {
+              id: d?.id ?? Math.random().toString(36).slice(2),
+              kg: typeof data?.kg === "number" ? data.kg : undefined,
+              lb: typeof data?.lb === "number" ? data.lb : undefined,
+              unit: data?.unit,
+              source: data?.source,
+              createdAt,
+            };
+          });
+
+          setItems(next);
+          setLoading(false);
+        } catch (e) {
+          console.warn("[AutoAdjustMacros weights onSnapshot] handler failed:", e?.message || e);
+          setLoading(false);
+        }
       },
       (err) => {
-        console.warn("weightprogrss snapshot error:", err?.message);
+        console.warn("[AutoAdjustMacros weightprogrss snapshot] error:", err?.message || err);
         setLoading(false);
       }
     );
 
     return () => {
-      unsubUser?.();
-      unsubList?.();
+      try { unsubUser && unsubUser(); } catch {}
+      try { unsubList && unsubList(); } catch {}
     };
   }, []);
 
@@ -132,7 +165,7 @@ export default function AutoAdjustMacros() {
       const ref = doc(db, "users", uid);
       await setDoc(ref, { AutoAdjustMacros: next ? "yes" : "no" }, { merge: true });
     } catch (e) {
-      console.warn("Failed to update AutoAdjustMacros:", e?.message);
+      console.warn("Failed to update AutoAdjustMacros:", e?.message || e);
       setIsEnabled(!next); // revert on failure
     }
   };
@@ -186,7 +219,6 @@ export default function AutoAdjustMacros() {
 
       <TouchableOpacity
         onPress={() => {
-          // keep sheet id consistent with this screen name
           dismiss("AutoAdjustMacros");
         }}
         hitSlop={8}

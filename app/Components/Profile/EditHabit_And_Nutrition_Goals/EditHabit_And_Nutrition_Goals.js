@@ -17,7 +17,7 @@ const DEFAULT_COLORS = {
   text: '#0F0F12',
   sub: '#7B7F87',
   divider: '#ECEEF1',
-  cal: '#111111',        // calories ring color (keep existing key)
+  cal: '#FFCF2D',        // calories ring color (keep existing key)
   protein: '#632EFF',
   carbs: '#F7931A',
   fat: '#FCDB2A',

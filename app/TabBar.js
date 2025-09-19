@@ -1,7 +1,8 @@
 
 // Tabbar.js
-import { Text, TouchableOpacity, View } from "react-native"
-import { height, size, width } from "react-native-responsive-sizes"
+import { Scan } from "lucide-react-native"
+import { TouchableOpacity, View } from "react-native"
+import { height, size } from "react-native-responsive-sizes"
 import { useSheets } from "./Context/SheetsContext"
 
 export default function Tabbar() {
@@ -16,18 +17,17 @@ export default function Tabbar() {
   return (
   
       <View style={{
-        flexDirection :'row',
+       // flexDirection :'row',
         width: "85%",
         position: 'absolute',
         alignSelf: 'center',
         alignItems: 'center',
         justifyContent: 'center',
         bottom: height(8),
-         gap: width(2),
-        justifyContent: "space-between", // pushes them apart
+
       }}>
 
-          <TouchableOpacity  
+     {/*     <TouchableOpacity  
            activeOpacity={0.8}
            onPress={() => present("s1")}
             style={{
@@ -56,7 +56,7 @@ export default function Tabbar() {
             </Text>
         </TouchableOpacity>
 
-
+*/}
 
 
 
@@ -70,8 +70,9 @@ export default function Tabbar() {
            
           }}
             style={{
-                height: size(60),
-                 width: width(42),
+                height: size(70),
+                 width:  size(70),
+                 alignSelf: 'center',
                 paddingHorizontal: 25,
               
         
@@ -80,19 +81,13 @@ export default function Tabbar() {
                 alignItems: 'center',
                 borderRadius: 18,
                 backgroundColor: '#151515',
-                  shadowColor: "#000",
+                shadowColor: "#000",
                 shadowOffset: { width: 0, height: 4 },
                 shadowOpacity: 0.30,
                 shadowRadius: 4.65,
                 elevation: 8,
             }}>
-            <Text style={{
-                color: '#fff',
-                fontSize: size(17),
-                fontWeight: "bold"
-            }}>
-                Camera
-            </Text>
+            <Scan color={"#fff"} />
         </TouchableOpacity>
 </View>
 

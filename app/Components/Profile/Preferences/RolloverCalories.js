@@ -65,23 +65,36 @@ export default function RolloverCalories() {
 
   useEffect(() => {
     const uid = getAuth().currentUser?.uid;
-    if (!uid) return;
+    if (!uid) {
+      setItems([]);
+      setLoading(false);
+      return;
+    }
 
     const db = getFirestore();
 
-    // Subscribe to user doc (weightUnit + RolloverCalories)
-    const unsubUser = onSnapshot(doc(db, "users", uid), (snap) => {
-      const data = snap.data() || {};
+    // Subscribe to user doc (weightUnit + RolloverCalories) — SAFE
+    const unsubUser = onSnapshot(
+      doc(db, "users", uid),
+      (snap) => {
+        try {
+          if (!snap || !snap.exists) return;
+          const data = typeof snap.data === "function" ? (snap.data() || {}) : {};
+          const wu = data?.weightUnit;
+          if (wu === "kg" || wu === "lb") {
+            setWeightUnit((prev) => (prev === wu ? prev : wu));
+          }
+          const roll = data?.RolloverCalories;
+          if (roll === "yes") setIsEnabled(true);
+          else if (roll === "no") setIsEnabled(false);
+        } catch (e) {
+          console.warn("[user onSnapshot] data() failed:", e?.message || e);
+        }
+      },
+      (err) => console.warn("[user onSnapshot] error:", err?.message || err)
+    );
 
-      if (data?.weightUnit === "kg" || data?.weightUnit === "lb") {
-        setWeightUnit((prev) => (prev === data.weightUnit ? prev : data.weightUnit));
-      }
-
-      if (data?.RolloverCalories === "yes") setIsEnabled(true);
-      else if (data?.RolloverCalories === "no") setIsEnabled(false);
-    });
-
-    // Subscribe to weight entries (unchanged; you can remove if not needed here)
+    // Subscribe to weight entries (SAFE)
     const qRef = query(
       collection(db, "users", uid, "weightprogrss"),
       orderBy("createdAt", "desc")
@@ -90,33 +103,50 @@ export default function RolloverCalories() {
     const unsubList = onSnapshot(
       qRef,
       (snap) => {
-        const next = snap.docs.map((d) => {
-          const data = d.data() || {};
-          const createdAt =
-            data.createdAt && typeof data.createdAt.toDate === "function"
-              ? data.createdAt.toDate()
-              : null;
-          return {
-            id: d.id,
-            kg: typeof data.kg === "number" ? data.kg : undefined,
-            lb: typeof data.lb === "number" ? data.lb : undefined,
-            unit: data.unit,
-            source: data.source,
-            createdAt,
-          };
-        });
-        setItems(next);
-        setLoading(false);
+        try {
+          const docs = Array.isArray(snap?.docs) ? snap.docs : [];
+          const next = docs.map((d) => {
+            let data = {};
+            try {
+              data = typeof d?.data === "function" ? (d.data() || {}) : {};
+            } catch (e) {
+              console.warn("[weights map] d.data() failed:", e?.message || e);
+            }
+
+            // createdAt tolerant parsing
+            let createdAt = null;
+            const raw = data?.createdAt;
+            if (raw) {
+              if (typeof raw?.toDate === "function") createdAt = raw.toDate();
+              else if (raw instanceof Date) createdAt = raw;
+              else if (typeof raw === "number") createdAt = new Date(raw);
+            }
+
+            return {
+              id: d?.id ?? Math.random().toString(36).slice(2),
+              kg: typeof data?.kg === "number" ? data.kg : undefined,
+              lb: typeof data?.lb === "number" ? data.lb : undefined,
+              unit: data?.unit,
+              source: data?.source,
+              createdAt,
+            };
+          });
+          setItems(next);
+          setLoading(false);
+        } catch (e) {
+          console.warn("[weights onSnapshot] handler failed:", e?.message || e);
+          setLoading(false);
+        }
       },
       (err) => {
-        console.warn("weightprogrss snapshot error:", err?.message);
+        console.warn("weightprogrss snapshot error:", err?.message || err);
         setLoading(false);
       }
     );
 
     return () => {
-      unsubUser?.();
-      unsubList?.();
+      try { unsubUser && unsubUser(); } catch {}
+      try { unsubList && unsubList(); } catch {}
     };
   }, []);
 
@@ -132,7 +162,7 @@ export default function RolloverCalories() {
       const ref = doc(db, "users", uid);
       await setDoc(ref, { RolloverCalories: next ? "yes" : "no" }, { merge: true });
     } catch (e) {
-      console.warn("Failed to update RolloverCalories:", e?.message);
+      console.warn("Failed to update RolloverCalories:", e?.message || e);
       setIsEnabled(!next); // revert on failure
     }
   };
@@ -148,7 +178,7 @@ export default function RolloverCalories() {
             marginTop: height(5),
           }}
         >
-         Rollover calories
+          Rollover calories
         </Text>
 
         <View

@@ -2,7 +2,7 @@
 import axios from "axios";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { ArrowRight, ChevronLeft } from "lucide-react-native";
+import { ArrowRight, ChevronLeft, MoveLeft } from "lucide-react-native";
 import "moment/locale/de";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { LogBox, Text, TouchableOpacity, View } from "react-native";

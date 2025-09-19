@@ -1,6 +1,6 @@
 // ./Cameras/Home.js
 import { getAuth, onAuthStateChanged } from "@react-native-firebase/auth";
-import { collection, getFirestore, onSnapshot } from "@react-native-firebase/firestore";
+import { collection, doc, getFirestore, onSnapshot } from "@react-native-firebase/firestore";
 
 import { useCurrentScannedItemId } from "@/app/Context/CurrentScannedItemIdContext";
 import { useDailyLeft } from "@/app/Context/DailyLeftContext";
@@ -31,9 +31,9 @@ import { Image } from "expo-image";
 import { CircularProgressBase } from "react-native-circular-progress-indicator";
 import TwoRowMonthlyHeatmap from "./WeeklyCalendar";
 
-import LottieView from "lottie-react-native";
 import {
   Candy,
+  Cigarette,
   Coffee,
   CupSoda,
   Droplet,
@@ -42,68 +42,50 @@ import {
   GlassWater,
   Leaf,
   Plus,
-  Wheat
+  Wheat,
 } from "lucide-react-native";
 
+/* ---------- Ring theme & helpers ---------- */
+const DEFAULT_COLORS = {
+  bg: "#ffffff",
+  card: "#F4F5F7",
+  text: "#0F0F12",
+  sub: "#7B7F87",
+  divider: "#ECEEF1",
+  cal: "#111111",
+  protein: "#632EFF",
+  carbs: "#F7931A",
+  fat: "#FCDB2A",
+  fiber: "#A87DD8",
+  sugar: "#FF89A0",
+  sodium: "#D7A44A",
+  coffee: "#C15217",
+  cigarette: "#F7931A",
+};
 
-// OneSignal d9c8472c-8b91-451f-9789-8d0b3bd8737c
+const COLORS = {
+  ...DEFAULT_COLORS,
+  cal: "#FFCF2D",
+  water: "#0057FF",
+};
 
-/* ---------- Smooth, low-churn Ring (CircularProgressBase) ---------- */
-const Ring = memo(function Ring({
-  value = 0,
-  max = 1,
-  radius = 35,
-  inW = 6,
-  aW = 6,
-  aC = "#000",
-  iC = "#D3DAE0",
-  index = 0,           // optional stagger index
-  animate = true,      // animate this update?
-  baseDuration = 600,  // base duration, scales with delta
-  children,
-}) {
-  const safeMax = Math.max(1, Number(max ?? 1));
-  const safeVal = Math.max(0, Math.min(safeMax, Math.round(Number(value ?? 0))));
+const ringProps = {
+  radius: 28,
+  activeStrokeWidth: 6,
+  inActiveStrokeWidth: 6,
+  inActiveStrokeOpacity: 0.15,
+  strokeLinecap: "round",
+  rotation: -90,
+};
 
-  const [prev, setPrev] = useState(safeVal); // previous to animate from
-  const delta = Math.abs(safeVal - prev);
-  const duration = animate
-    ? Math.min(1000, Math.max(280, Math.round(baseDuration * (0.25 + delta / Math.max(1, safeMax)))))
-    : 0;
-  const delay = animate ? Math.min(400, index * 80) : 0;
+// clamp to a 0–100 int
+const clampPct = (current = 0, goal = 1) => {
+  const g = Math.max(1, Number(goal || 1));
+  const c = Math.max(0, Number(current || 0));
+  return Math.round(Math.min(100, (c / g) * 100));
+};
 
-  useEffect(() => {
-    if (prev !== safeVal) setPrev(safeVal);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [safeVal]);
-
-
-  
-
-  return (
-    <CircularProgressBase
-      initialValue={prev}
-      value={safeVal}
-      maxValue={safeMax}
-      duration={duration}
-      delay={delay}
-      radius={radius}
-      inActiveStrokeWidth={inW}
-      activeStrokeWidth={aW}
-      showProgressValue={false}
-      activeStrokeColor={aC}
-      inActiveStrokeColor={iC}
-      clockwise
-      {...(Platform.OS === "android"
-        ? { renderToHardwareTextureAndroid: true }
-        : { shouldRasterizeIOS: true })}
-    >
-      {children}
-    </CircularProgressBase>
-  );
-});
-
-/* ---------- Tiny progress bar (Animated width) ---------- */
+/* ---------- Tiny progress bar ---------- */
 const ProgressBar = memo(function ProgressBar({
   height: h = 8,
   progress = 0,
@@ -146,13 +128,15 @@ const ProgressBar = memo(function ProgressBar({
   );
 });
 
-/* ---------- Header (heavy) split out & memoized ---------- */
+/* ---------- Header (memoized) ---------- */
 const HeaderView = memo(function HeaderView({
   userId,
   vals,
   maxes,
   animateRings,
-  sleeping = false, // 👈 don’t render heavy stuff when sheets are open
+  sleeping = false,
+  colorsMap = COLORS,
+  enabledMap = {},
 }) {
   const [showSwiper, setShowSwiper] = useState(false);
   const [showHeatmap, setShowHeatmap] = useState(false);
@@ -161,6 +145,35 @@ const HeaderView = memo(function HeaderView({
   const pagerRef = useRef(null);
   const [pagerIndex, setPagerIndex] = useState(0);
   const lastHapticTsRef = useRef(0);
+
+  // convert "left" to current% of goal (0–100)
+  const pctFromLeft = useCallback((left, goal) => {
+    const g = Math.max(1, Number(goal || 1));
+    const l = Math.max(0, Number(left || 0));
+    const current = Math.max(0, g - l);
+    return clampPct(current, g);
+  }, []);
+
+  // staggered animation props
+  const animProps = useCallback(
+    (i = 0) => {
+      if (!animateRings) return { duration: 0, delay: 0 };
+      const delay = Math.min(400, i * 80);
+      const duration = 600;
+      return { duration, delay };
+    },
+    [animateRings]
+  );
+
+  const enabledOr = useCallback(
+    (key, fallback = true) => {
+      const v = enabledMap?.[key];
+      return v === undefined ? fallback : !!v;
+    },
+    [enabledMap]
+  );
+
+  const { present } = useSheets();
 
   // Lazy-mount heavy UI ONLY when not sleeping
   useEffect(() => {
@@ -182,28 +195,642 @@ const HeaderView = memo(function HeaderView({
 
   const onPagerSelected = useCallback(({ nativeEvent }) => {
     setPagerIndex(nativeEvent.position);
-    // light haptic, throttled (just in case some ROM fires multiple)
     const now = Date.now();
     if (now - lastHapticTsRef.current > 150) {
       lastHapticTsRef.current = now;
-      try { Haptics.selectionAsync && Haptics.selectionAsync(); } catch {}
+      try {
+        Haptics.selectionAsync && Haptics.selectionAsync();
+      } catch {}
     }
   }, []);
 
+  /* ------------------ CARD RENDERERS ------------------ */
+  const widthForCount = useCallback(
+    (count) => (count === 1 ? "100%" : count === 2 ? "48%" : "30%"),
+    []
+  );
 
-    const animation = useRef(null);
+  const CoffeeCard = useCallback(
+    (w, key, index = 0) => (
+      <View
+        key={key}
+        style={{
+          height: height(25),
+          width: w,
+          borderRadius: 19,
+          marginTop: height(1.8),
+          alignItems: "center",
+          backgroundColor: "#fff",
+          ...(Platform.OS === "ios"
+            ? {
+                shadowColor: "#000",
+                shadowOffset: { width: 0, height: 0 },
+                shadowOpacity: 0.05,
+                shadowRadius: 6,
+              }
+            : { elevation: 1, shadowColor: "#00000020" }),
+        }}
+      >
+        <View style={{ marginTop: height(2) }}>
+          <CircularProgressBase
+            {...ringProps}
+            radius={50}
+            {...animProps(index)}
+            value={pctFromLeft(vals.coffeeLeft, maxes.coffeeCups)}
+            maxValue={100}
+            activeStrokeWidth={9}
+            inActiveStrokeWidth={9}
+            activeStrokeColor={colorsMap.coffee}
+            inActiveStrokeColor={colorsMap.coffee}
+          >
+            <Coffee size={25} color="#000" />
+          </CircularProgressBase>
+        </View>
+
+        <View
+          style={{
+            marginTop: height(2),
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <RollingMetric
+            value={vals.coffeeLeft}
+            toFixed={0}
+            color="#000"
+            numberStyle={{ fontSize: size(30) }}
+          />
+          <Text
+            style={{
+              fontSize: size(13),
+              color: "#000",
+              marginTop: height(1),
+              fontWeight: "800",
+            }}
+          >
+            Coffee <Text style={{ fontWeight: "500" }}>left</Text>
+          </Text>
+        </View>
+      </View>
+    ),
+    [animProps, colorsMap.coffee, maxes.coffeeCups, pctFromLeft, vals.coffeeLeft]
+  );
+
+  const CaloriesCard = useCallback(
+    (w, key, index = 0) => (
+      <View
+        key={key}
+        style={{
+          height: height(25),
+          width: w,
+          borderRadius: 19,
+          marginTop: height(1.8),
+          alignItems: "center",
+          backgroundColor: "#151515",
+          ...(Platform.OS === "ios"
+            ? {
+                shadowColor: "#000",
+                shadowOffset: { width: 0, height: 0 },
+                shadowOpacity: 0.05,
+                shadowRadius: 6,
+              }
+            : { elevation: 1, shadowColor: "#00000020" }),
+        }}
+      >
+        <View style={{ marginTop: height(2) }}>
+          <CircularProgressBase
+            {...ringProps}
+            {...animProps(index)}
+            radius={50}
+            activeStrokeWidth={9}
+            inActiveStrokeWidth={9}
+            value={pctFromLeft(vals.caloriesLeft, maxes.calories)}
+            maxValue={100}
+            activeStrokeColor={colorsMap.cal}
+            inActiveStrokeColor={colorsMap.cal}
+          >
+            <Flame size={25} color={"#fff"} />
+          </CircularProgressBase>
+        </View>
+
+        <View
+          style={{
+            marginTop: height(2),
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <RollingMetric
+            value={vals.caloriesLeft}
+            toFixed={0}
+            color="#fff"
+            numberStyle={{ fontSize: size(30) }}
+          />
+          <Text
+            style={{
+              fontSize: size(13),
+              color: "#fff",
+              marginTop: height(1),
+              fontWeight: "800",
+            }}
+          >
+            Calories <Text style={{ fontWeight: "500" }}>left</Text>
+          </Text>
+        </View>
+      </View>
+    ),
+    [animProps, colorsMap.cal, maxes.calories, pctFromLeft, vals.caloriesLeft]
+  );
+
+  const SmallCard = useCallback(
+    ({ kind, label, value, unit, max, colorKey, Icon, index, widthPercent }) => (
+      <View
+        key={`small-${kind}`}
+        style={{
+          height: height(20),
+          width: widthPercent,
+          marginTop: height(2),
+          backgroundColor: "#fff",
+          borderRadius: 15,
+          alignItems: "center",
+          justifyContent: "center",
+          ...(Platform.OS === "ios"
+            ? {
+                shadowColor: "#000",
+                shadowOffset: { width: 0, height: 0 },
+                shadowOpacity: 0.05,
+                shadowRadius: 6,
+              }
+            : { elevation: 1, shadowColor: "#00000020" }),
+        }}
+      >
+        <RollingMetric
+          label="left"
+          value={value}
+          unit={unit}
+          toFixed={0}
+          color="#000"
+          numberStyle={{ fontSize: size(20) }}
+        />
+        <Text
+          style={{
+            fontSize: size(13),
+            marginTop: height(1),
+            marginBottom: height(2),
+            fontWeight: "800",
+          }}
+        >
+          {label} <Text style={{ fontWeight: "500" }}>left</Text>
+        </Text>
+        <CircularProgressBase
+          {...ringProps}
+          {...animProps(index)}
+          value={pctFromLeft(value, max)}
+          maxValue={100}
+          activeStrokeColor={colorsMap[colorKey]}
+          inActiveStrokeColor={colorsMap[colorKey]}
+        >
+          <Icon size={18} color="#000" />
+        </CircularProgressBase>
+      </View>
+    ),
+    [animProps, colorsMap, pctFromLeft]
+  );
+
+  const HalfCard = useCallback(
+    ({ kind, label, value, unit, max, colorKey, Icon, index, widthPercent }) => (
+      <View
+        key={`half-${kind}`}
+        style={{
+          height: "100%",
+          width: widthPercent,
+          backgroundColor: "#fff",
+          borderRadius: 15,
+          alignItems: "center",
+          justifyContent: "center",
+          ...(Platform.OS === "ios"
+            ? {
+                shadowColor: "#000",
+                shadowOffset: { width: 0, height: 0 },
+                shadowOpacity: 0.05,
+                shadowRadius: 6,
+              }
+            : { elevation: 1, shadowColor: "#00000020" }),
+        }}
+      >
+        <RollingMetric
+          label="left"
+          value={value}
+          unit={unit}
+          toFixed={0}
+          color="#000"
+          numberStyle={{ marginTop: height(1), fontSize: size(20) }}
+        />
+        <Text
+          style={{
+            fontSize: size(13),
+            marginTop: height(1),
+            marginBottom: height(2),
+            fontWeight: "800",
+          }}
+        >
+          {label} Left
+        </Text>
+        <CircularProgressBase
+          {...ringProps}
+          {...animProps(index)}
+          value={pctFromLeft(value, max)}
+          maxValue={100}
+          activeStrokeColor={colorsMap[colorKey]}
+          inActiveStrokeColor={colorsMap[colorKey]}
+        >
+          <Icon size={25} color="#000" />
+        </CircularProgressBase>
+      </View>
+    ),
+    [animProps, colorsMap, pctFromLeft]
+  );
+
+  const CigarettesWide = useCallback(
+    (widthPercent) => (
+      <View
+        key="cigs"
+        style={{
+          height: height(20),
+          width: widthPercent,
+          backgroundColor: "#fff",
+          borderRadius: 15,
+          justifyContent: "center",
+          ...(Platform.OS === "ios"
+            ? {
+                shadowColor: "#000",
+                shadowOffset: { width: 0, height: 0 },
+                shadowOpacity: 0.05,
+                shadowRadius: 6,
+              }
+            : { elevation: 1, shadowColor: "#00000020" }),
+        }}
+      >
+        <View
+          style={{
+            marginLeft: width(15),
+            width: 100,
+            alignItems: "center",
+          }}
+        >
+          <RollingMetric
+            label="right"
+            value={vals.cigarettesLeft}
+            toFixed={0}
+            color="#000"
+            numberStyle={{ marginTop: height(5), fontSize: size(25) }}
+          />
+          <Text
+            style={{
+              fontSize: size(13),
+              marginTop: height(1),
+              marginBottom: height(2),
+              fontWeight: "800",
+            }}
+          >
+            Cigarettes Left
+          </Text>
+        </View>
+
+        <View style={{ right: width(15), position: "absolute" }}>
+          <CircularProgressBase
+            {...ringProps}
+            {...animProps(1)}
+            value={pctFromLeft(vals.cigarettesLeft, maxes.cigarettes)}
+            maxValue={100}
+            radius={50}
+            activeStrokeWidth={9}
+            inActiveStrokeWidth={9}
+            activeStrokeColor={colorsMap.cigarette}
+            inActiveStrokeColor={colorsMap.cigarette}
+          >
+            <Cigarette size={25} color="#000" />
+          </CircularProgressBase>
+        </View>
+      </View>
+    ),
+    [animProps, colorsMap.cigarette, maxes.cigarettes, pctFromLeft, vals.cigarettesLeft]
+  );
+
+  /* ----------------- DYNAMIC PACKING ----------------- */
+
+  // half-width widgets (2 per row) in priority order
+  const halfPool = useMemo(() => {
+    const out = [];
+    if (enabledOr("coffee", true)) out.push("coffee");
+    if (enabledOr("calories", true)) out.push("calories");
+    if (enabledOr("sugar", true)) out.push("sugar");
+    if (enabledOr("fat", true)) out.push("fat");
+    if (enabledOr("fiber", true)) out.push("fiber");
+    if (enabledOr("sodium", true)) out.push("sodium");
+    return out;
+  }, [enabledOr]);
+
+  // small widgets (3 per row)
+  const smallPool = useMemo(() => {
+    const out = ["water"]; // water always shown in your UI
+    if (enabledOr("protein", true)) out.push("protein");
+    if (enabledOr("carbs", true)) out.push("carbs");
+    return out;
+  }, [enabledOr]);
+
+  const cigsEnabled = enabledOr("cigarette", true);
+  const healthEnabled = true;
+
+  // Build slides packed forward
+  const slides = useMemo(() => {
+    const take = (arr, start, n) => arr.slice(start, start + Math.max(0, n));
+    let halfIdx = 0;
+    let smallIdx = 0;
+
+    // slide 0
+    const slide0 = [];
+    const s0Half = take(halfPool, halfIdx, 2);
+    halfIdx += s0Half.length;
+    if (s0Half.length) slide0.push({ type: "half", items: s0Half });
+
+    const s0Small = take(smallPool, smallIdx, 3);
+    smallIdx += s0Small.length;
+    if (s0Small.length) slide0.push({ type: "small", items: s0Small });
+
+    // slide 1
+    const slide1 = [];
+    const s1Half = take(halfPool, halfIdx, 2);
+    halfIdx += s1Half.length;
+    if (s1Half.length) slide1.push({ type: "half", items: s1Half });
+    if (healthEnabled) slide1.push({ type: "wide", items: ["health"] });
+
+    // slide 2
+    const slide2 = [];
+    const s2Half = take(halfPool, halfIdx, 2);
+    halfIdx += s2Half.length;
+    if (s2Half.length) slide2.push({ type: "half", items: s2Half });
+    if (cigsEnabled) slide2.push({ type: "wide", items: ["cigs"] });
+
+    return [slide0, slide1, slide2];
+  }, [halfPool, smallPool, cigsEnabled]);
+
+  // 🔥 REMOVE EMPTY SLIDES
+  const filteredSlides = useMemo(
+    () => slides.filter((rows) => rows.length > 0),
+    [slides]
+  );
+
+  // keep pager index in range when slides change
   useEffect(() => {
-    // You can control the ref programmatically, rather than using autoPlay
-    // animation.current?.play();
-  }, []);
+    if (filteredSlides.length === 0) {
+      setPagerIndex(0);
+      return;
+    }
+    if (pagerIndex >= filteredSlides.length) {
+      const next = Math.max(0, filteredSlides.length - 1);
+      setPagerIndex(next);
+      // sync the PagerView
+      requestAnimationFrame(() => {
+        try {
+          pagerRef.current?.setPageWithoutAnimation?.(next);
+        } catch {}
+      });
+    }
+  }, [filteredSlides.length, pagerIndex]);
 
+  /* ------------------- RENDER ROWS ------------------- */
+  const halfMeta = {
+    sugar: {
+      label: "Sugar",
+      value: vals.sugarLeft,
+      unit: "g",
+      max: maxes.sugarG,
+      colorKey: "sugar",
+      Icon: Candy,
+    },
+    fat: {
+      label: "Fat",
+      value: vals.satFatLeft,
+      unit: "g",
+      max: maxes.satFatG,
+      colorKey: "fat",
+      Icon: Droplet,
+    },
+    fiber: {
+      label: "Fiber",
+      value: vals.fiberLeft,
+      unit: "g",
+      max: maxes.fiberG,
+      colorKey: "fiber",
+      Icon: Leaf,
+    },
+    sodium: {
+      label: "Sodium",
+      value: vals.sodiumLeft,
+      unit: "mg",
+      max: maxes.sodiumMg,
+      colorKey: "sodium",
+      Icon: CupSoda,
+    },
+  };
 
+  const smallMeta = {
+    // keep your text for the water card (“Protein left”)
+    water: {
+      label: "Protein",
+      value: vals.waterLeft,
+      unit: "g",
+      max: maxes.waterMl,
+      colorKey: "water",
+      Icon: GlassWater,
+    },
+    protein: {
+      label: "Protein",
+      value: vals.proteinLeft,
+      unit: "g",
+      max: maxes.proteinG,
+      colorKey: "protein",
+      Icon: Egg,
+    },
+    carbs: {
+      label: "Carbs",
+      value: vals.carbsLeft,
+      unit: "g",
+      max: maxes.carbsG,
+      colorKey: "carbs",
+      Icon: Wheat,
+    },
+  };
 
+  const renderHalfRow = (items) => {
+    const count = items.length;
+    const w = widthForCount(count);
+    return (
+      <View
+        style={{
+          flexDirection: "row",
+          height: height(25),
+          alignSelf: "center",
+          marginTop: height(1.8),
+          width: "90%",
+          justifyContent: count === 1 ? "center" : "space-between",
+        }}
+      >
+        {items.map((k, idx) => {
+          if (k === "coffee") return CoffeeCard(w, "coffee", idx);
+          if (k === "calories") return CaloriesCard(w, "calories", idx);
+          const m = halfMeta[k];
+          return (
+            <HalfCard
+              key={k}
+              kind={k}
+              label={m.label}
+              value={m.value}
+              unit={m.unit}
+              max={m.max}
+              colorKey={m.colorKey}
+              Icon={m.Icon}
+              index={idx}
+              widthPercent={w}
+            />
+          );
+        })}
+      </View>
+    );
+  };
 
+  const renderSmallRow = (items) => {
+    const count = items.length;
+    const w = widthForCount(count);
+    return (
+      <View
+        style={{
+          height: height(32),
+          flexDirection: "row",
+          marginTop: height(2),
+          width: "90%",
+          alignSelf: "center",
+          justifyContent: count === 1 ? "center" : "space-between",
+        }}
+      >
+        {items.map((k, idx) => {
+          const m = smallMeta[k];
+          return (
+            <SmallCard
+              key={k}
+              kind={k}
+              label={m.label}
+              value={m.value}
+              unit={m.unit}
+              max={m.max}
+              colorKey={m.colorKey}
+              Icon={m.Icon}
+              index={idx}
+              widthPercent={w}
+            />
+          );
+        })}
+      </View>
+    );
+  };
+
+  const renderWide = (key) => {
+    if (key === "health") {
+      return (
+        <View
+          key="health"
+          style={{
+            marginTop: height(2),
+            height: height(20),
+            alignSelf: "center",
+            width: "90%",
+            backgroundColor: "#151515",
+            borderRadius: 15,
+            marginBottom: height(2),
+            ...(Platform.OS === "ios"
+              ? {
+                  shadowColor: "#000",
+                  shadowOffset: { width: 0, height: 0 },
+                  shadowOpacity: 0.05,
+                  shadowRadius: 8,
+                }
+              : { elevation: 2, shadowColor: "#00000030" }),
+          }}
+        >
+          <View
+            style={{
+              flexDirection: "row",
+              marginLeft: width(5),
+              marginTop: height(2),
+              alignItems: "center",
+            }}
+          >
+            <Text style={{ fontSize: size(20), fontWeight: "800", color: "#fff" }}>
+              Health Score
+            </Text>
+            <Text
+              style={{
+                position: "absolute",
+                right: width(5),
+                color: "#fff",
+                fontWeight: "700",
+              }}
+            >
+              70/100
+            </Text>
+          </View>
+
+          <View style={{ marginTop: height(2), width: "90%", alignSelf: "center" }}>
+            <ProgressBar progress={60} height={8} bg="#5BC951" />
+          </View>
+
+          <Text
+            style={{
+              fontSize: size(13),
+              width: "90%",
+              marginLeft: width(5),
+              color: "#fff",
+              marginTop: height(2),
+              lineHeight: height(2.5),
+            }}
+          >
+            You're below your calorie, carb, and fat goals, but need to increase protein for
+            effective weight loss. Keep focusing on boosting protein intake!
+          </Text>
+        </View>
+      );
+    }
+    return (
+      <View
+        key="cigs-row"
+        style={{
+          flexDirection: "row",
+          height: height(25),
+          alignSelf: "center",
+          marginTop: height(1.8),
+          width: "90%",
+          justifyContent: "center",
+        }}
+      >
+        {CigarettesWide("100%")}
+      </View>
+    );
+  };
+
+  const renderRows = (rows, slideKey) => (
+    <View key={slideKey} style={{ paddingTop: height(2) }}>
+      {rows.map((r) => {
+        if (r.type === "half") return renderHalfRow(r.items);
+        if (r.type === "small") return renderSmallRow(r.items);
+        return renderWide(r.items[0]);
+      })}
+    </View>
+  );
 
   return (
     <View style={{ paddingTop: height(12), backgroundColor: "#fff" }}>
-      {/* Heatmap (lazy / skeleton while sleeping) */}
+      {/* Heatmap */}
       <View style={{ minHeight: height(8), justifyContent: "center" }}>
         {!sleeping && showHeatmap ? (
           <TwoRowMonthlyHeatmap
@@ -229,7 +856,7 @@ const HeaderView = memo(function HeaderView({
       {/* Add widget */}
       <TouchableOpacity
         onPress={() => {
-          if (!sleeping) Haptics.selectionAsync();
+          present("Home_Add_Widget");
         }}
         disabled={sleeping}
         style={{
@@ -242,698 +869,94 @@ const HeaderView = memo(function HeaderView({
       >
         <Plus size={16} />
         <Text style={{ marginLeft: width(2), fontSize: size(17), fontWeight: "800" }}>
-          Add widget
+          Add Widgets
         </Text>
       </TouchableOpacity>
 
-      {/* PagerView (fixed height so the page can scroll vertically) */}
+      {/* PagerView */}
       {!sleeping && showSwiper ? (
-        <>
-          <PagerView
-            ref={pagerRef}
-            style={{ height: height(48), width: "100%" }}
-            initialPage={0}
-            onPageSelected={onPagerSelected}
-            offscreenPageLimit={1}          // keep 1 neighbor alive
-            pageMargin={12}                 // tiny gap between pages (helps perf feel)
-            overScrollMode="never"          // Android bounce disable
-            scrollEnabled
-          >
-            {/* Slide 1 */}
-            <View key="slide-1" style={{ paddingTop: height(2) }}>
-              {/* Big calories card */}
+        filteredSlides.length > 0 ? (
+          <>
+            <PagerView
+              ref={pagerRef}
+              style={{ height: height(52), width: "100%" }}
+              initialPage={0}
+              onPageSelected={onPagerSelected}
+              offscreenPageLimit={1}
+              pageMargin={12}
+              overScrollMode="never"
+              scrollEnabled
+            >
+              {filteredSlides.map((rows, i) => renderRows(rows, `slide-${i}`))}
+            </PagerView>
+
+            {/* Dots (hide if single page) */}
+            {filteredSlides.length > 1 && (
               <View
                 style={{
-                  height: height(20),
-                  width: "90%",
-                  alignSelf: "center",
-                  borderRadius: 19,
-                  marginTop: height(1.8),
+                  flexDirection: "row",
                   justifyContent: "center",
                   alignItems: "center",
-                  backgroundColor: "#151515",
-                  ...(Platform.OS === "ios"
-                    ? {
-                        shadowColor: "#000",
-                        shadowOffset: { width: 0, height: 0 },
-                        shadowOpacity: 0.05,
-                        shadowRadius: 10,
-                      }
-                    : { elevation: 2, shadowColor: "#00000030" }),
+                  marginTop: 12,
+                  marginBottom: 12,
                 }}
               >
-
-                <View style={{
-                   borderRadius: 19,
-                  height: "100%",
-                  width: "100%",
-                   position: 'absolute',
-                  overflow: 'hidden'
-                }}>
-
-    
-
-                 <LottieView
-                  autoPlay
-                  ref={animation}
-                  style={{
-                    
-                    width: 500,
-                    height:500,
-                  }} contentFit="contain"
-                  // Find more Lottie files at https://lottiefiles.com/featured
-                  source={require("../../../assets/CaloriesBackground.json")}
-                />
-
-                  </View>
-                <View style={{ flexDirection: "row", width: "95%", alignItems: "center" }}>
-                  <View style={{ marginTop: 0, marginLeft: width(5) }}>
-                    <RollingMetric
-                      value={vals.caloriesLeft}
-                      toFixed={0}
-                      color="#000"
-                     
-                      numberStyle={{ fontSize: size(35) }}
-                    />
-                    <Text
+                {filteredSlides.map((_, i) =>
+                  i === pagerIndex ? (
+                    <View
+                      key={`dot-${i}`}
                       style={{
-                        fontSize: size(13),
-                        color: "#000",
-                        marginLeft: width(2),
-                        marginTop: height(1),
-                        fontWeight: "800",
+                        backgroundColor: "#000",
+                        width: size(40),
+                        height: 8,
+                        borderRadius: 4,
+                        marginHorizontal: 3,
+                        marginVertical: 3,
                       }}
-                    >
-                      Calories left
-                    </Text>
-                  </View>
-
-                  <View style={{ marginTop: 0, marginLeft: width(15) }}>
-                    <Ring
-                      value={vals.caloriesLeft}
-                      max={maxes.calories}
-                      radius={60}
-                      inW={9}
-                      aW={9}
-                      aC="#FFCF2D"
-                      iC="#2A2A2A"
-                      index={0}
-                      animate={animateRings}
-                    >
-                      <Flame size={25} color="#000" />
-                    </Ring>
-                  </View>
-                </View>
+                    />
+                  ) : (
+                    <View
+                      key={`dot-${i}`}
+                      style={{
+                        backgroundColor: "#D3DAE0",
+                        width: 8,
+                        height: 8,
+                        borderRadius: 4,
+                        marginHorizontal: 3,
+                        marginVertical: 3,
+                      }}
+                    />
+                  )
+                )}
               </View>
+            )}
 
-              {/* Small cards row */}
-              <View
-                style={{
-                  height: height(32),
-                  flexDirection: "row",
-                  width: "90%",
-                  alignSelf: "center",
-                  justifyContent: "space-between",
-                }}
-              >
-                {/* Water */}
-                <View
-                  style={{
-                    height: height(20),
-                    width: "48%",
-                    borderRadius: 20,
-                    marginTop: height(2),
-                    justifyContent: "center",
-                    alignItems: "center",
-                    backgroundColor: "#fff",
-                    ...(Platform.OS === "ios"
-                      ? {
-                          shadowColor: "#000",
-                          shadowOffset: { width: 0, height: 0 },
-                          shadowOpacity: 0.03,
-                          shadowRadius: 6,
-                        }
-                      : { elevation: 1, shadowColor: "#00000020" }),
-                  }}
-                >
-                  <Ring
-                    value={vals.waterLeft}
-                    max={maxes.waterMl}
-                    radius={35}
-                    inW={6}
-                    aW={6}
-                    aC="#0057FF"
-                    iC="#D3DAE0"
-                    index={1}
-                    animate={animateRings}
-                  >
-                    <GlassWater size={25} color="#000" />
-                  </Ring>
-                  <RollingMetric
-                    label="left"
-                    value={vals.waterLeft}
-                    unit="ml"
-                    toFixed={0}
-                    color="#000"
-                    numberStyle={{ marginTop: height(1), fontSize: size(20) }}
-                  />
-                  <Text style={{ marginTop: height(1), fontSize: size(13), fontWeight: "800" }}>
-                    Water Left
-                  </Text>
-                </View>
-
-                {/* Coffee */}
-                <View
-                  style={{
-                    height: height(20),
-                    width: "48%",
-                    borderRadius: 20,
-                    marginTop: height(2),
-                    justifyContent: "center",
-                    alignItems: "center",
-                    backgroundColor: "#fff",
-                    ...(Platform.OS === "ios"
-                      ? {
-                          shadowColor: "#000",
-                          shadowOffset: { width: 0, height: 0 },
-                          shadowOpacity: 0.03,
-                          shadowRadius: 6,
-                        }
-                      : { elevation: 1, shadowColor: "#00000020" }),
-                  }}
-                >
-                  <Ring
-                    value={vals.coffeeLeft}
-                    max={maxes.coffeeCups}
-                    radius={35}
-                    inW={6}
-                    aW={6}
-                    aC="#C15217"
-                    iC="#D3DAE0"
-                    index={2}
-                    animate={animateRings}
-                  >
-                    <Coffee size={25} color="#000" />
-                  </Ring>
-                  <RollingMetric
-                    label="left"
-                    value={vals.coffeeLeft}
-                    unit="cup"
-                    toFixed={0}
-                    color="#000"
-                    numberStyle={{ marginTop: height(1), fontSize: size(20) }}
-                  />
-                  <Text style={{ marginTop: height(1), fontSize: size(13), fontWeight: "800" }}>
-                    Coffee Left
-                  </Text>
-                </View>
-              </View>
-            </View>
-
-            {/* Slide 2 */}
-            <View key="slide-2" style={{ paddingTop: height(2) }}>
-              <View
-                style={{
-                  flexDirection: "row",
-                  height: height(20),
-                  alignSelf: "center",
-                  marginTop: height(1.8),
-                  width: "90%",
-                  justifyContent: "space-between",
-                }}
-              >
-                {/* Protein */}
-                <View
-                  style={{
-                    width: "48%",
-                    height: "100%",
-                    backgroundColor: "#fff",
-                    borderRadius: 15,
-                    alignItems: "center",
-                    justifyContent: "center",
-                    ...(Platform.OS === "ios"
-                      ? {
-                          shadowColor: "#000",
-                          shadowOffset: { width: 0, height: 0 },
-                          shadowOpacity: 0.03,
-                          shadowRadius: 6,
-                        }
-                      : { elevation: 1, shadowColor: "#00000020" }),
-                  }}
-                >
-                  <RollingMetric
-                    label="left"
-                    value={vals.proteinLeft}
-                    unit="g"
-                    toFixed={0}
-                    color="#000"
-                    numberStyle={{ marginTop: height(1), fontSize: size(20) }}
-                  />
-                  <Text
-                    style={{
-                      fontSize: size(13),
-                      marginTop: height(1),
-                      marginBottom: height(2),
-                      fontWeight: "800",
-                    }}
-                  >
-                    Protein Left
-                  </Text>
-                  <Ring
-                    value={vals.proteinLeft}
-                    max={maxes.proteinG}
-                    radius={35}
-                    inW={6}
-                    aW={6}
-                    aC="#632EFF"
-                    iC="#D3DAE0"
-                    index={0}
-                    animate={animateRings}
-                  >
-                    <Egg size={25} color="#000" />
-                  </Ring>
-                </View>
-
-                {/* Carbs */}
-                <View
-                  style={{
-                    width: "48%",
-                    height: "100%",
-                    backgroundColor: "#fff",
-                    borderRadius: 15,
-                    alignItems: "center",
-                    justifyContent: "center",
-                    ...(Platform.OS === "ios"
-                      ? {
-                          shadowColor: "#000",
-                          shadowOffset: { width: 0, height: 0 },
-                          shadowOpacity: 0.03,
-                          shadowRadius: 6,
-                        }
-                      : { elevation: 1, shadowColor: "#00000020" }),
-                  }}
-                >
-                  <RollingMetric
-                    label="left"
-                    value={vals.carbsLeft}
-                    unit="g"
-                    toFixed={0}
-                    color="#000"
-                    numberStyle={{ marginTop: height(1), fontSize: size(20) }}
-                  />
-                  <Text
-                    style={{
-                      fontSize: size(13),
-                      marginTop: height(1),
-                      marginBottom: height(2),
-                      fontWeight: "800",
-                    }}
-                  >
-                    Carbs Left
-                  </Text>
-                  <Ring
-                    value={vals.carbsLeft}
-                    max={maxes.carbsG}
-                    radius={35}
-                    inW={6}
-                    aW={6}
-                    aC="#F7931A"
-                    iC="#D3DAE0"
-                    index={1}
-                    animate={animateRings}
-                  >
-                    <Wheat size={25} color="#000" />
-                  </Ring>
-                </View>
-              </View>
-
-              {/* Health card */}
-              <View
-                style={{
-                  marginTop: height(2),
-                  height: height(20),
-                  alignSelf: "center",
-                  width: "90%",
-                  backgroundColor: "#151515",
-                  borderRadius: 15,
-                  marginBottom: height(2),
-                  ...(Platform.OS === "ios"
-                    ? {
-                        shadowColor: "#000",
-                        shadowOffset: { width: 0, height: 0 },
-                        shadowOpacity: 0.04,
-                        shadowRadius: 8,
-                      }
-                    : { elevation: 2, shadowColor: "#00000030" }),
-                }}
-              >
-
-
-                    <View style={{
-                   borderRadius: 15,
-                  height: "100%",
-                  width: "100%",
-                   position: 'absolute',
-                  overflow: 'hidden'
-                }}>
-
-    
-
-                 <LottieView
-                  autoPlay
-                  ref={animation}
-                  style={{
-                    
-                    width: 500,
-                    height:500,
-                  }} contentFit="contain"
-                  // Find more Lottie files at https://lottiefiles.com/featured
-                  source={require("../../../assets/HealthScoreBackground.json")}
-                />
-
-                 </View>
-
-
-                <View
-                  style={{
-                    flexDirection: "row",
-                    marginLeft: width(5),
-                    marginTop: height(2),
-                    alignItems: "center",
-                  }}
-                >
-
-
+            {/* Section titles */}
+            <Text
+              style={{
+                fontSize: size(18),
+                marginTop: height(4),
+                marginLeft: width(5),
+                fontWeight: "bold",
+              }}
+            >
+              Recently eaten
+            </Text>
           
-
-                  <Text style={{ fontSize: size(20), fontWeight: "800", color: "#000" }}>
-                    Health Score
-                  </Text>
-                  <Text
-                    style={{
-                      position: "absolute",
-                      right: width(5),
-                      color: "#000",
-                      fontWeight: "700",
-                    }}
-                  >
-                    70/100
-                  </Text>
-                </View>
-
-                <View style={{ marginTop: height(2), width: "90%", alignSelf: "center" }}>
-                  <ProgressBar progress={60} height={8} bg="#5BC951" />
-                </View>
-
-                <Text
-                  style={{
-                    fontSize: size(13),
-                    width: "90%",
-                    marginLeft: width(5),
-                    color: "#000",
-                    marginTop: height(2),
-                    lineHeight: height(2.5),
-                  }}
-                >
-                  You're below your calorie, carb, and fat goals, but need to increase protein for
-                  effective weight loss. Keep focusing on boosting protein intake!
-                </Text>
-              </View>
-            </View>
-
-            {/* Slide 3 */}
-            <View key="slide-3" style={{ paddingTop: height(2) }}>
-              <View
-                style={{
-                  flexDirection: "row",
-                  height: height(20),
-                  alignSelf: "center",
-                  marginTop: height(1.8),
-                  width: "90%",
-                  justifyContent: "space-between",
-                }}
-              >
-                {/* Fiber */}
-                <View
-                  style={{
-                    width: "48%",
-                    height: "100%",
-                    backgroundColor: "#fff",
-                    borderRadius: 15,
-                    alignItems: "center",
-                    justifyContent: "center",
-                    ...(Platform.OS === "ios"
-                      ? {
-                          shadowColor: "#000",
-                          shadowOffset: { width: 0, height: 0 },
-                          shadowOpacity: 0.03,
-                          shadowRadius: 6,
-                        }
-                      : { elevation: 1, shadowColor: "#00000020" }),
-                  }}
-                >
-                  <RollingMetric
-                    label="left"
-                    value={vals.fiberLeft}
-                    unit="g"
-                    toFixed={0}
-                    color="#000"
-                    numberStyle={{ marginTop: height(1), fontSize: size(20) }}
-                  />
-                  <Text
-                    style={{
-                      fontSize: size(13),
-                      marginTop: height(1),
-                      marginBottom: height(2),
-                      fontWeight: "800",
-                    }}
-                  >
-                    Fiber Left
-                  </Text>
-                  <Ring
-                    value={vals.fatLeft}
-                    max={maxes.fatG}
-                    radius={35}
-                    inW={6}
-                    aW={6}
-                    aC="#FDFF50"
-                    iC="#D3DAE0"
-                    index={0}
-                    animate={animateRings}
-                  >
-                    <Leaf size={25} color="#000" />
-                  </Ring>
-                </View>
-
-                {/* Sugar */}
-                <View
-                  style={{
-                    width: "48%",
-                    height: "100%",
-                    backgroundColor: "#fff",
-                    borderRadius: 15,
-                    alignItems: "center",
-                    justifyContent: "center",
-                    ...(Platform.OS === "ios"
-                      ? {
-                          shadowColor: "#000",
-                          shadowOffset: { width: 0, height: 0 },
-                          shadowOpacity: 0.03,
-                          shadowRadius: 6,
-                        }
-                      : { elevation: 1, shadowColor: "#00000020" }),
-                  }}
-                >
-                  <RollingMetric
-                    label="left"
-                    value={vals.sugarLeft}
-                    unit="g"
-                    toFixed={0}
-                    color="#000"
-                    numberStyle={{ marginTop: height(1), fontSize: size(20) }}
-                  />
-                  <Text
-                    style={{
-                      fontSize: size(13),
-                      marginTop: height(1),
-                      marginBottom: height(2),
-                      fontWeight: "800",
-                    }}
-                  >
-                    Sugar Left
-                  </Text>
-                  <Ring
-                    value={vals.sugarLeft}
-                    max={maxes.sugarG}
-                    radius={35}
-                    inW={6}
-                    aW={6}
-                    aC="#FFA2E2"
-                    iC="#D3DAE0"
-                    index={1}
-                    animate={animateRings}
-                  >
-                    <Candy size={25} color="#000" />
-                  </Ring>
-                </View>
-              </View>
-
-              <View
-                style={{
-                  flexDirection: "row",
-                  height: height(20),
-                  alignSelf: "center",
-                  marginTop: height(1.8),
-                  width: "90%",
-                  justifyContent: "space-between",
-                }}
-              >
-                {/* Fat (sat) */}
-                <View
-                  style={{
-                    width: "48%",
-                    height: "100%",
-                    backgroundColor: "#fff",
-                    borderRadius: 15,
-                    alignItems: "center",
-                    justifyContent: "center",
-                    ...(Platform.OS === "ios"
-                      ? {
-                          shadowColor: "#000",
-                          shadowOffset: { width: 0, height: 0 },
-                          shadowOpacity: 0.03,
-                          shadowRadius: 6,
-                        }
-                      : { elevation: 1, shadowColor: "#00000020" }),
-                  }}
-                >
-                  <RollingMetric
-                    label="left"
-                    value={vals.satFatLeft}
-                    unit="g"
-                    toFixed={0}
-                    color="#000"
-                    numberStyle={{ marginTop: height(1), fontSize: size(20) }}
-                  />
-                  <Text
-                    style={{
-                      fontSize: size(13),
-                      marginTop: height(1),
-                      marginBottom: height(2),
-                      fontWeight: "800",
-                    }}
-                  >
-                    Fat Left
-                  </Text>
-                  <Ring
-                    value={vals.satFatLeft}
-                    max={maxes.satFatG}
-                    radius={35}
-                    inW={6}
-                    aW={6}
-                    aC="#FDFF50"
-                    iC="#D3DAE0"
-                    index={2}
-                    animate={animateRings}
-                  >
-                    <Droplet size={25} color="#000" />
-                  </Ring>
-                </View>
-
-                {/* Sodium */}
-                <View
-                  style={{
-                    width: "48%",
-                    height: "100%",
-                    backgroundColor: "#fff",
-                    borderRadius: 15,
-                    alignItems: "center",
-                    justifyContent: "center",
-                    ...(Platform.OS === "ios"
-                      ? {
-                          shadowColor: "#000",
-                          shadowOffset: { width: 0, height: 0 },
-                          shadowOpacity: 0.03,
-                          shadowRadius: 6,
-                        }
-                      : { elevation: 1, shadowColor: "#00000020" }),
-                  }}
-                >
-                  <RollingMetric
-                    label="left"
-                    value={vals.sodiumLeft}
-                    unit="mg"
-                    toFixed={0}
-                    color="#000"
-                    numberStyle={{ marginTop: height(1), fontSize: size(20) }}
-                  />
-                  <Text
-                    style={{
-                      fontSize: size(13),
-                      marginTop: height(1),
-                      marginBottom: height(2),
-                      fontWeight: "800",
-                    }}
-                  >
-                    Sodium Left
-                  </Text>
-                  <Ring
-                    value={vals.sodiumLeft}
-                    max={maxes.sodiumMg}
-                    radius={35}
-                    inW={6}
-                    aW={6}
-                    aC="#1E90FF"
-                    iC="#D3DAE0"
-                    index={3}
-                    animate={animateRings}
-                  >
-                    <CupSoda size={25} color="#000" />
-                  </Ring>
-                </View>
-              </View>
-            </View>
-          </PagerView>
-
-          {/* Pagination dots (like your Swiper) */}
+          </>
+        ) : (
+          // no slides at all (very unlikely)
           <View
             style={{
-              flexDirection: "row",
-              justifyContent: "center",
-              alignItems: "center",
-              marginTop: 12,
-              marginBottom: 12,
+              height: height(55),
+              width: "90%",
+              alignSelf: "center",
+              backgroundColor: "#F6F7F9",
+              borderRadius: 16,
+              marginTop: height(2),
             }}
-          >
-            {[0, 1, 2].map((i) =>
-              i === pagerIndex ? (
-                <View
-                  key={`dot-${i}`}
-                  style={{
-                    backgroundColor: "#000",
-                    width: size(40),
-                    height: 8,
-                    borderRadius: 4,
-                    marginHorizontal: 3,
-                    marginVertical: 3,
-                  }}
-                />
-              ) : (
-                <View
-                  key={`dot-${i}`}
-                  style={{
-                    backgroundColor: "#D3DAE0",
-                    width: 8,
-                    height: 8,
-                    borderRadius: 4,
-                    marginHorizontal: 3,
-                    marginVertical: 3,
-                  }}
-                />
-              )
-            )}
-          </View>
-        </>
+          />
+        )
       ) : (
         <View
           style={{
@@ -946,23 +969,48 @@ const HeaderView = memo(function HeaderView({
           }}
         />
       )}
-
-      <Text
-        style={{
-          fontSize: size(17),
-          marginTop: height(2),
-          marginLeft: width(5),
-          fontWeight: "bold",
-        }}
-      >
-        Recently eaten
-      </Text>
-      <Text style={{ marginLeft: width(5), fontSize: size(16), marginTop: height(2) }}>
-        Today
-      </Text>
     </View>
   );
 });
+
+
+
+// --- helpers ---
+const toDateFromAny = (t) => {
+  if (!t) return null;
+  if (typeof t === "number") return new Date(t > 1e12 ? t : t * 1000);
+  if (typeof t === "string") {
+    const d = new Date(t);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  if (t?.toDate) { try { return t.toDate(); } catch {} }
+  // Firestore Timestamp-like plain objects
+  if (typeof t === "object") {
+    const s = t.seconds ?? t._seconds;
+    const ns = t.nanoseconds ?? t._nanoseconds;
+    if (s != null) return new Date(s * 1000 + Math.floor((ns ?? 0) / 1e6));
+  }
+  return null;
+};
+
+const formatLocalTime = (date) => {
+  if (!date) return "";
+  try {
+    // Device locale + locale-appropriate 12/24h
+    return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(date);
+  } catch {
+    // Fallback if Intl isn't available
+    const h = date.getHours();
+    const m = String(date.getMinutes()).padStart(2, "0");
+    return `${h}:${m}`;
+  }
+};
+
+
+
+
+
+
 
 /* =================== HOME =================== */
 export default function Home() {
@@ -971,40 +1019,51 @@ export default function Home() {
   const [userId, setUserId] = useState(getAuth().currentUser?.uid ?? null);
   const [foods, setFoods] = useState([]);
 
+  // AllNeeds/current (colors, enabled, focus)
+  const [needsConfig, setNeedsConfig] = useState({
+    colors: null,
+    enabled: null,
+    focus: null,
+  });
+
   const { setCurrentItemId, setCurrentItem } = useCurrentScannedItemId();
   const { present } = useSheets();
 
-  
   const { targets } = useDailyTargets();
   const { left, today } = useDailyLeft();
 
-  // Sheets busy flag: sleep when ANY sheet is open
+  // Sheets busy flag
   const sheets = useSheets();
   const sheetsBusy =
-    sheets.isS2Open || sheets.isS3Open || sheets.isS4Open || sheets.isS5Open ||
-    sheets.isS6Open || sheets.isS7Open || sheets.isS8Open || sheets.isS9Open;
+    sheets.isS2Open ||
+    sheets.isS3Open ||
+    sheets.isS4Open ||
+    sheets.isS5Open ||
+    sheets.isS6Open ||
+    sheets.isS7Open ||
+    sheets.isS8Open ||
+    sheets.isS9Open;
 
   /* ---------- Animation window controls ---------- */
   const [animateRings, setAnimateRings] = useState(false);
   const animateTimer = useRef(null);
   const prevValsRef = useRef(null);
 
-  const openAnimWindow = useCallback((ms = 800) => {
-    if (sheetsBusy) return; // never animate while covered
-    setAnimateRings(true);
-    if (animateTimer.current) clearTimeout(animateTimer.current);
-    animateTimer.current = setTimeout(() => {
-      setAnimateRings(false);
-      animateTimer.current = null;
-    }, ms);
-  }, [sheetsBusy]);
+  const openAnimWindow = useCallback(
+    (ms = 800) => {
+      if (sheetsBusy) return;
+      setAnimateRings(true);
+      if (animateTimer.current) clearTimeout(animateTimer.current);
+      animateTimer.current = setTimeout(() => {
+        setAnimateRings(false);
+        animateTimer.current = null;
+      }, ms);
+    },
+    [sheetsBusy]
+  );
 
-
-
-
-  // Hard stop animations if a sheet opens
   useEffect(() => {
-    if (sheetsBusy && animateTimer.current) {s
+    if (sheetsBusy && animateTimer.current) {
       clearTimeout(animateTimer.current);
       animateTimer.current = null;
       setAnimateRings(false);
@@ -1029,7 +1088,6 @@ export default function Home() {
       }
       setUserId(user.uid);
 
-      // If a sheet is open, don't attach the heavy listener
       if (sheetsBusy) {
         setLoading(false);
         return;
@@ -1044,7 +1102,7 @@ export default function Home() {
           if (ids !== foodsIdsRef.current.join("|")) {
             foodsIdsRef.current = rows.map((r) => r.id);
             setFoods(rows);
-            openAnimWindow(700); // animate rings when meals list changes
+            openAnimWindow(700);
           }
           setErr(null);
           setLoading(false);
@@ -1066,6 +1124,31 @@ export default function Home() {
       }
     };
   }, [openAnimWindow, sheetsBusy]);
+
+  /* ---------- AllNeeds/current listener (real-time) ---------- */
+  useEffect(() => {
+    if (!userId) {
+      setNeedsConfig({ colors: null, enabled: null, focus: null });
+      return;
+    }
+    const db = getFirestore();
+    const ref = doc(db, "users", userId, "AllNeeds", "current");
+
+    const unsub = onSnapshot(
+      ref,
+      { includeMetadataChanges: true },
+      (snap) => {
+        const data = snap.data() || {};
+        setNeedsConfig({
+          colors: data.colors || null,
+          enabled: data.enabled || null,
+          focus: data.focus || null,
+        });
+      },
+      (e) => console.warn("[AllNeeds/current] onSnapshot error:", e)
+    );
+    return () => unsub && unsub();
+  }, [userId]);
 
   /* ---------- List item ---------- */
   const onPressFood = useCallback(
@@ -1094,14 +1177,6 @@ export default function Home() {
           marginBottom: height(1),
           opacity: sheetsBusy ? 0.6 : 1,
           backgroundColor: "#fff",
-          ...(Platform.OS === "ios"
-            ? {
-                shadowColor: "#000",
-                shadowOffset: { width: 0, height: 0 },
-                shadowOpacity: 0.03,
-                shadowRadius: 6,
-              }
-            : { elevation: 1, shadowColor: "#00000020" }),
         }}
       >
         <View
@@ -1133,7 +1208,13 @@ export default function Home() {
             +{Math.round(Number(item?.items?.[0]?.calories_kcal || 0))} cal
           </Text>
 
-          <Text style={{ color: "#BBC1CB", marginTop: height(0.5) }}>20.35</Text>
+        <Text style={{ color: "#BBC1CB", marginTop: height(0.5) }}>
+          {formatLocalTime(
+            toDateFromAny(
+              item?.created_at ?? item?.timestamp ?? item?.createdAt ?? item?.time ?? item?.date ?? item?.ts
+            )
+          )}
+        </Text>
         </View>
       </TouchableOpacity>
     ),
@@ -1142,13 +1223,43 @@ export default function Home() {
 
   const keyExtractor = useCallback((item, i) => item?.id ?? String(i), []);
 
-  /* ===== Memoized derived numbers for the header ===== */
+  /* ===== Targets from habitSettings (coffee + cigarettes) ===== */
+  const [habitSettings, setHabitSettings] = useState(null);
+  useEffect(() => {
+    if (!userId) {
+      setHabitSettings(null);
+      return;
+    }
+    const db = getFirestore();
+    const userRef = doc(db, "users", userId);
+    const unsub = onSnapshot(
+      userRef,
+      (snap) => {
+        const data = snap.data();
+        setHabitSettings(data?.habitSettings ?? null);
+      },
+      (e) => console.warn("[habitSettings] onSnapshot error:", e)
+    );
+    return () => unsub && unsub();
+  }, [userId]);
+
+  const coffeeTarget = useMemo(() => {
+    const v = habitSettings?.coffeePerDayTarget;
+    return Number.isFinite(Number(v)) ? Number(v) : Number(targets?.coffeeCups ?? 0);
+  }, [habitSettings, targets]);
+
+  const cigarettesTarget = useMemo(() => {
+    const v = habitSettings?.cigarettesPerDayTarget;
+    return Number.isFinite(Number(v)) ? Number(v) : 0;
+  }, [habitSettings]);
+
+  /* ===== Derived numbers for the header ===== */
   const vals = useMemo(() => {
     const n = (x) => (Number.isFinite(Number(x)) ? Number(x) : 0);
     return {
       caloriesLeft: Math.max(0, n(targets?.calories) - n(today?.caloriesToday)),
       waterLeft: Math.max(0, n(targets?.waterMl) - n(today?.waterToday)),
-      coffeeLeft: Math.max(0, n(targets?.coffeeCups) - n(today?.coffeeToday)),
+      coffeeLeft: Math.max(0, n(coffeeTarget) - n(today?.coffeeToday)),
       proteinLeft: Math.max(0, n(targets?.proteinG) - n(today?.proteinToday)),
       carbsLeft: Math.max(0, n(targets?.carbsG) - n(today?.carbsToday)),
       fiberLeft: Math.max(0, n(targets?.fiberG) - n(today?.fiberToday)),
@@ -1156,8 +1267,9 @@ export default function Home() {
       satFatLeft: Math.max(0, n(targets?.satFatG) - n(today?.fatToday)),
       sugarLeft: Math.max(0, n(targets?.sugarG) - n(today?.sugarToday)),
       sodiumLeft: Math.max(0, n(targets?.sodiumMg) - n(today?.sodiumToday)),
+      cigarettesLeft: Math.max(0, n(cigarettesTarget) - n(today?.cigarettesToday)),
     };
-  }, [targets, today]);
+  }, [targets, today, coffeeTarget, cigarettesTarget]);
 
   // Open animation window when vals change (but not while sleeping)
   useEffect(() => {
@@ -1172,13 +1284,13 @@ export default function Home() {
     prevValsRef.current = vals;
   }, [vals, openAnimWindow, sheetsBusy]);
 
-  /* ===== Memoized max values ===== */
+  /* ===== Max values ===== */
   const maxes = useMemo(() => {
     const atLeast1 = (x) => Math.max(1, Number(x ?? 1));
     return {
       calories: atLeast1(targets?.calories),
       waterMl: atLeast1(targets?.waterMl),
-      coffeeCups: atLeast1(targets?.coffeeCups),
+      coffeeCups: atLeast1(coffeeTarget),
       proteinG: atLeast1(targets?.proteinG),
       carbsG: atLeast1(targets?.carbsG),
       fiberG: atLeast1(targets?.fiberG),
@@ -1186,20 +1298,176 @@ export default function Home() {
       satFatG: atLeast1(targets?.satFatG),
       sugarG: atLeast1(targets?.sugarG),
       sodiumMg: atLeast1(targets?.sodiumMg),
+      cigarettes: atLeast1(cigarettesTarget),
     };
-  }, [targets]);
+  }, [targets, coffeeTarget, cigarettesTarget]);
+
+  /* ===== Merge Firestore colors ===== */
+  const ringColors = useMemo(() => {
+    const c = needsConfig.colors || {};
+    return {
+      ...COLORS,
+      protein: c.protein || COLORS.protein,
+      carbs: c.carbs || COLORS.carbs,
+      fat: c.fat || COLORS.fat,
+      fiber: c.fiber || COLORS.fiber,
+      sugar: c.sugar || COLORS.sugar,
+      sodium: c.sodium || COLORS.sodium,
+      coffee: c.coffee || COLORS.coffee,
+      cigarette: c.cigarette || COLORS.cigarette,
+      cal: c.calories || COLORS.cal,
+    };
+  }, [needsConfig.colors]);
+
+  const enabledMap = needsConfig.enabled || {};
 
   return (
     <View style={{ backgroundColor: "#fff", height: "100%", width: "100%" }}>
       <Animated.FlatList
-        data={foods}
+        /* ✅ Sort by time (most recent first) so grouping makes sense */
+        data={useMemo(() => {
+          const getMs = (it) => {
+            const t =
+              it?.timestamp ??
+              it?.created_at ??
+              it?.createdAt ??
+              it?.time ??
+              it?.date ??
+              it?.ts;
+            if (!t) return 0;
+            if (typeof t === "number") return t > 1e12 ? t : t * 1000;
+            if (typeof t === "string") {
+              const d = new Date(t);
+              return isNaN(d.getTime()) ? 0 : d.getTime();
+            }
+            if (t?.toDate) {
+              try {
+                return t.toDate().getTime();
+              } catch {}
+            }
+            if (typeof t === "object" && (t.seconds || t.nanoseconds === 0)) {
+              const s = Number(t.seconds || 0) * 1000;
+              const ns = Number(t.nanoseconds || 0) / 1e6;
+              return s + ns;
+            }
+            return 0;
+          };
+          const arr = Array.isArray(foods) ? [...foods] : [];
+          arr.sort((a, b) => getMs(b) - getMs(a));
+          return arr;
+        }, [foods])}
         keyExtractor={keyExtractor}
-        renderItem={renderItem}
+        /* ✅ Inject relative-date section titles without changing your renderItem */
+        renderItem={(props) => {
+          const { item, index } = props;
+
+          // Helpers duplicated here to avoid changing anything else
+          const getMs = (it) => {
+            const t =
+              it?.timestamp ??
+              it?.created_at ??
+              it?.createdAt ??
+              it?.time ??
+              it?.date ??
+              it?.ts;
+            if (!t) return 0;
+            if (typeof t === "number") return t > 1e12 ? t : t * 1000;
+            if (typeof t === "string") {
+              const d = new Date(t);
+              return isNaN(d.getTime()) ? 0 : d.getTime();
+            }
+            if (t?.toDate) {
+              try {
+                return t.toDate().getTime();
+              } catch {}
+            }
+            if (typeof t === "object" && (t.seconds || t.nanoseconds === 0)) {
+              const s = Number(t.seconds || 0) * 1000;
+              const ns = Number(t.nanoseconds || 0) / 1e6;
+              return s + ns;
+            }
+            return 0;
+          };
+
+          const startOfWeekMonday = (d) => {
+            const dt = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+            const day = (dt.getDay() + 6) % 7; // Monday=0
+            dt.setDate(dt.getDate() - day);
+            dt.setHours(0, 0, 0, 0);
+            return dt;
+          };
+
+          const labelFor = (ms) => {
+            if (!ms) return "Earlier";
+            const now = new Date();
+            const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+            const itemDate = new Date(ms);
+            const itemStart = new Date(itemDate.getFullYear(), itemDate.getMonth(), itemDate.getDate());
+            const diffDays = Math.floor((todayStart - itemStart) / 86400000);
+
+            if (diffDays === 0) return "Today";
+            if (diffDays === 1) return "Yesterday";
+
+            const thisWeekStart = startOfWeekMonday(now);
+            const lastWeekStart = new Date(thisWeekStart);
+            lastWeekStart.setDate(thisWeekStart.getDate() - 7);
+            const nextWeekStart = new Date(thisWeekStart);
+            nextWeekStart.setDate(thisWeekStart.getDate() + 7);
+
+            if (itemDate >= thisWeekStart && itemDate < nextWeekStart) return "This week";
+            if (itemDate >= lastWeekStart && itemDate < thisWeekStart) return "Last week";
+
+            const ymNow = now.getFullYear() * 12 + now.getMonth();
+            const ymItem = itemDate.getFullYear() * 12 + itemDate.getMonth();
+            const mDiff = Math.max(0, ymNow - ymItem);
+
+            if (mDiff === 0) return "Earlier this month";
+            if (mDiff === 1) return "1 month ago";
+            return `${mDiff} months ago`;
+          };
+
+          // Compare to previous item (on the same sorted order)
+          const sorted = Array.isArray(foods)
+            ? [...foods].sort((a, b) => getMs(b) - getMs(a))
+            : [];
+          const prev = index > 0 ? sorted[index - 1] : null;
+          const label = labelFor(getMs(item));
+          const prevLabel = prev ? labelFor(getMs(prev)) : null;
+
+          // 👉 Only show a header when the label changes.
+          // Also: if the first group is "Today", do NOT render the "Today" header here
+          // (the static "Today" text in the header already covers it).
+          // If there are no Today items, the first header will be "Yesterday" / etc.
+       const shouldShowHeader =
+  index === 0 ? true : label !== prevLabel;
+
+
+          return (
+            <>
+              {shouldShowHeader && (
+                <Text
+                  style={{
+                    marginLeft: width(5),
+                    fontSize: size(14),
+                    marginTop: height(5),
+                    marginBottom: height(3),
+                    fontWeight: "800",
+                  }}
+                >
+                  {label}
+                </Text>
+              )}
+              {renderItem(props)}
+            </>
+          );
+        }}
         ListHeaderComponent={
           <HeaderView
             userId={userId}
             vals={vals}
             maxes={maxes}
+            colorsMap={ringColors}
+            enabledMap={enabledMap}
             animateRings={!sheetsBusy && animateRings}
             sleeping={sheetsBusy}
           />
@@ -1207,12 +1475,18 @@ export default function Home() {
         ListHeaderComponentStyle={{ backgroundColor: "#fff" }}
         contentContainerStyle={{ paddingBottom: height(18) }}
         showsVerticalScrollIndicator={false}
-        removeClippedSubviews={false}    
+        removeClippedSubviews={false}
         windowSize={5}
         maxToRenderPerBatch={4}
         initialNumToRender={4}
         updateCellsBatchingPeriod={80}
         scrollEnabled={!sheetsBusy}
+        // 🔑 force re-render when enabled/colors/focus change
+        extraData={{
+          enabled: needsConfig.enabled,
+          colors: needsConfig.colors,
+          focus: needsConfig.focus,
+        }}
         getItemLayout={(_, index) => {
           const row = size(80) + height(1);
           return { length: row, offset: row * index, index };

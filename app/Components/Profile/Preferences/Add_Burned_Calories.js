@@ -2,13 +2,13 @@
 import { useSheets } from "@/app/Context/SheetsContext";
 import { getAuth } from "@react-native-firebase/auth";
 import {
-    collection,
-    doc,
-    getFirestore,
-    onSnapshot,
-    orderBy,
-    query,
-    setDoc, // write to Firestore
+  collection,
+  doc,
+  getFirestore,
+  onSnapshot,
+  orderBy,
+  query,
+  setDoc, // write to Firestore
 } from "@react-native-firebase/firestore";
 import { MoveLeft } from "lucide-react-native";
 import { useEffect, useState } from "react";
@@ -65,23 +65,39 @@ export default function Add_Burned_Calories() {
 
   useEffect(() => {
     const uid = getAuth().currentUser?.uid;
-    if (!uid) return;
+
+    if (!uid) {
+      setItems([]);
+      setLoading(false);
+      return;
+    }
 
     const db = getFirestore();
 
-    // Subscribe to user doc (weightUnit + AddExerciseCalories)
-    const unsubUser = onSnapshot(doc(db, "users", uid), (snap) => {
-      const data = snap.data() || {};
-
-      if (data?.weightUnit === "kg" || data?.weightUnit === "lb") {
-        setWeightUnit((prev) => (prev === data.weightUnit ? prev : data.weightUnit));
+    // Subscribe to user doc (weightUnit + AddExerciseCalories) — SAFE
+    const unsubUser = onSnapshot(
+      doc(db, "users", uid),
+      (snap) => {
+        try {
+          if (!snap || !snap.exists) return;
+          const data = typeof snap.data === "function" ? snap.data() || {} : {};
+          const wu = data?.weightUnit;
+          if (wu === "kg" || wu === "lb") {
+            setWeightUnit((prev) => (prev === wu ? prev : wu));
+          }
+          const add = data?.AddExerciseCalories;
+          if (add === "yes") setIsEnabled(true);
+          else if (add === "no") setIsEnabled(false);
+        } catch (e) {
+          console.warn("[user onSnapshot] data() failed:", e?.message || e);
+        }
+      },
+      (err) => {
+        console.warn("[user onSnapshot] error:", err?.message || err);
       }
+    );
 
-      if (data?.AddExerciseCalories === "yes") setIsEnabled(true);
-      else if (data?.AddExerciseCalories === "no") setIsEnabled(false);
-    });
-
-    // Subscribe to weight entries (unchanged; you can remove if not needed here)
+    // Subscribe to weight entries (SAFE)
     const qRef = query(
       collection(db, "users", uid, "weightprogrss"),
       orderBy("createdAt", "desc")
@@ -90,33 +106,53 @@ export default function Add_Burned_Calories() {
     const unsubList = onSnapshot(
       qRef,
       (snap) => {
-        const next = snap.docs.map((d) => {
-          const data = d.data() || {};
-          const createdAt =
-            data.createdAt && typeof data.createdAt.toDate === "function"
-              ? data.createdAt.toDate()
-              : null;
-          return {
-            id: d.id,
-            kg: typeof data.kg === "number" ? data.kg : undefined,
-            lb: typeof data.lb === "number" ? data.lb : undefined,
-            unit: data.unit,
-            source: data.source,
-            createdAt,
-          };
-        });
-        setItems(next);
-        setLoading(false);
+        try {
+          const docs = Array.isArray(snap?.docs) ? snap.docs : [];
+          const next = docs
+            .filter(Boolean)
+            .map((d) => {
+              let data = {};
+              try {
+                data = typeof d?.data === "function" ? d.data() || {} : {};
+              } catch (e) {
+                console.warn("[weights map] d.data() failed:", e?.message || e);
+              }
+
+              // createdAt tolerant parsing
+              let createdAt = null;
+              const raw = data?.createdAt;
+              if (raw) {
+                if (typeof raw?.toDate === "function") createdAt = raw.toDate();
+                else if (raw instanceof Date) createdAt = raw;
+                else if (typeof raw === "number") createdAt = new Date(raw);
+              }
+
+              return {
+                id: d?.id ?? Math.random().toString(36).slice(2),
+                kg: typeof data?.kg === "number" ? data.kg : undefined,
+                lb: typeof data?.lb === "number" ? data.lb : undefined,
+                unit: data?.unit,
+                source: data?.source,
+                createdAt,
+              };
+            });
+
+          setItems(next);
+          setLoading(false);
+        } catch (e) {
+          console.warn("[weights onSnapshot] handler failed:", e?.message || e);
+          setLoading(false);
+        }
       },
       (err) => {
-        console.warn("weightprogrss snapshot error:", err?.message);
+        console.warn("weightprogrss snapshot error:", err?.message || err);
         setLoading(false);
       }
     );
 
     return () => {
-      unsubUser?.();
-      unsubList?.();
+      try { unsubUser && unsubUser(); } catch {}
+      try { unsubList && unsubList(); } catch {}
     };
   }, []);
 
@@ -132,7 +168,7 @@ export default function Add_Burned_Calories() {
       const ref = doc(db, "users", uid);
       await setDoc(ref, { AddExerciseCalories: next ? "yes" : "no" }, { merge: true });
     } catch (e) {
-      console.warn("Failed to update AddExerciseCalories:", e?.message);
+      console.warn("Failed to update AddExerciseCalories:", e?.message || e);
       setIsEnabled(!next); // revert on failure
     }
   };

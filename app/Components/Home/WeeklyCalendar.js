@@ -182,12 +182,13 @@ export default function InfiniteWeekCalendar({
             const BLACK = "#000";
             const GREEN = "#39C463";
 
-            // pill border: remove it for TODAY so the grey track is visible
-            let borderColor = GREEN, borderStyle = "solid", borderWidth = 1.5;
-            if (hasEntry) {
+            // Border: hide on today when there's NO entry (so SVG shows);
+            // otherwise show green or dashed black.
+            let borderColor, borderStyle, borderWidth;
+            if (isToday && !hasEntry) {
+              borderColor = "transparent"; borderStyle = "solid"; borderWidth = 0;
+            } else if (hasEntry) {
               borderColor = GREEN; borderStyle = "solid"; borderWidth = 1.5;
-            } else if (isToday) {
-              borderColor = "transparent"; borderStyle = "solid"; borderWidth = 0; // <-- key change
             } else {
               borderColor = BLACK; borderStyle = "dashed"; borderWidth = 1.5;
             }
@@ -233,16 +234,22 @@ export default function InfiniteWeekCalendar({
                       {(() => {
                         const SIZE      = RING;
                         const R         = SIZE / 2;
-                        const STROKE_W  = 3; // thicker so grey is obvious
+                        const STROKE_W  = 3;
                         const rDraw     = R - STROKE_W / 2 - 0.5;
                         const CIRC      = 2 * Math.PI * rDraw;
 
-                        const elapsed   = Math.max(0, Math.min(0.999, pctOfDayElapsed(new Date())));
-                        const dashOff   = CIRC * (1 - elapsed);
+                        if (hasEntry) {
+                          // HAS entry today: NO black progress, NO grey track — only the green ring (outer border).
+                          // So we render nothing here.
+                          return null;
+                        }
+
+                        // NO entry today: show grey track + black elapsed arc.
+                        const elapsed = Math.max(0, Math.min(0.999, pctOfDayElapsed(new Date())));
+                        const dashOff = CIRC * (1 - elapsed);
 
                         return (
                           <>
-                            {/* grey full track = time left */}
                             <Circle
                               cx={R}
                               cy={R}
@@ -251,12 +258,11 @@ export default function InfiniteWeekCalendar({
                               strokeWidth={STROKE_W}
                               fill="none"
                             />
-                            {/* black arc = elapsed */}
                             <Circle
                               cx={R}
                               cy={R}
                               r={rDraw}
-                              stroke="#000"
+                              stroke={BLACK}
                               strokeWidth={STROKE_W}
                               fill="none"
                               strokeDasharray={`${CIRC} ${CIRC}`}

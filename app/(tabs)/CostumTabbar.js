@@ -13,6 +13,7 @@ import { default as Edit_Scan_FoodScan, default as Edit_ScanpageHome } from "../
 import PageAfterScanFood from "../Components/Camera/PageAfterScan/PageAfterScan_Scan_Food/PageAfterScan_Scan_Food";
 import PageAfterScan_FoodLabel from "../Components/Camera/PageAfterScan/PageAfterScan_Scan_FoodLabel/PageAfterScan_FoodLabel";
 import EditMyWeight from "../Components/EditMyWeight/EditMyWeight";
+import Home_Add_Widget from "../Components/Home/Home_Add_Widget";
 import EditHabit_And_Nutrition_Goals from "../Components/Profile/EditHabit_And_Nutrition_Goals/EditHabit_And_Nutrition_Goals";
 import Generate_Based_On_Habits_AndHealth from "../Components/Profile/EditHabit_And_Nutrition_Goals/Generate_Based_On_Habits_AndHealth/Generate_Based_On_Habits_AndHealth";
 import Habits_Weight_History from "../Components/Profile/Habits_Weight_History/Habits_Weight_History";
@@ -31,7 +32,6 @@ import TargetWeight from "../Components/Profile/Profile/TargetWeight";
 import ScanPageHome from "../Components/ScanPageHome/ScanPageHome";
 import { useCameraActive } from "../Context/CameraActiveContext";
 import { useSheets } from "../Context/SheetsContext";
-
 
 
 
@@ -82,7 +82,8 @@ export default function SheetsHost() {
     isPrivacy_Policy, setIsPrivacy_Policy,
      isEmail_Support, setIsEmail_Support,
      isDelete_Account, setIsDelete_Account,
-   isLogIn, setIsLogIn
+   isLogIn, setIsLogIn,
+   isHome_Add_Widget, setIsHome_Add_Widget
   } = useSheets();
 
 
@@ -114,6 +115,7 @@ export default function SheetsHost() {
   useEffect(() => { console.log("[SheetsHost] Email_Support open ->", isEmail_Support); }, [isEmail_Support]);
   useEffect(() => { console.log("[SheetsHost] Delete_Account open ->", isDelete_Account); }, [isDelete_Account]);
   useEffect(() => { console.log("[SheetsHost] LogIn open ->", isLogIn); }, [isLogIn]);
+  useEffect(() => { console.log("[SheetsHost] Home_Add_Widget open ->", isHome_Add_Widget); }, [isHome_Add_Widget]);
 
 
 
@@ -606,6 +608,25 @@ export default function SheetsHost() {
       </TrueSheet>
 
 
+
+
+
+
+
+
+
+
+        <TrueSheet
+        ref={register("Home_Add_Widget")}
+        sizes={["large"]}
+        cornerRadius={24}
+        enablePanDownToClose
+        backgroundColor="#fff"
+        onChange={(index) => setIsHome_Add_Widget(typeof index === "number" && index >= 0)}
+        onDismiss={() => setIsHome_Add_Widget(false)}
+      >
+       <Home_Add_Widget />
+      </TrueSheet>
 
 
 
