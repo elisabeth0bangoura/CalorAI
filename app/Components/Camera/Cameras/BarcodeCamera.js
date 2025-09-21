@@ -23,7 +23,7 @@ import {
 import { height, width } from "react-native-responsive-sizes";
 import PageAfterScan from "../PageAfterScan/PageAfterScan_Scan_Barcode/PageAfterScan_Scan_Barcode";
 
-// ✅ Current-item context (so other screens know the saved doc id)
+// ✅ Current-item context
 import { useCurrentScannedItemId } from "@/app/Context/CurrentScannedItemIdContext";
 
 // ✅ Firebase
@@ -40,7 +40,8 @@ import storage from "@react-native-firebase/storage";
 
 /* ---------------- helpers ---------------- */
 const toNum = (n, d = 0) => (Number.isFinite(+n) ? +n : d);
-const toStr = (s, d = "") => (typeof s === "string" && s.trim().length ? s.trim() : d);
+const toStr = (s, d = "") =>
+  typeof s === "string" && s.trim().length ? s.trim() : d;
 const norm = (s) => String(s || "").trim().toLowerCase();
 
 const onlyDigits = (s) => String(s || "").replace(/\D/g, "");
@@ -80,8 +81,6 @@ const firstNum = (...vals) => {
 };
 
 /* ---------------- ingredient + alt helpers ---------------- */
-
-// classify candidate kcal vs base kcal (±25 kcal → "similar")
 const deriveBucket = (candKcal, baseKcal) => {
   if (!Number.isFinite(+candKcal) || !Number.isFinite(+baseKcal)) return "similar";
   const diff = +candKcal - +baseKcal;
@@ -89,13 +88,10 @@ const deriveBucket = (candKcal, baseKcal) => {
   if (diff > 25) return "higher";
   return "similar";
 };
-
 const normalizeBucket = (b) => {
   const x = norm(b);
   return x === "lower" || x === "higher" || x === "similar" ? x : "similar";
 };
-
-// if an alt string starts with the base brand, treat it as same brand
 const splitBrandFromDisplay = (display = "", baseBrand = "") => {
   const d = String(display || "").trim();
   const bb = String(baseBrand || "").trim();
@@ -261,7 +257,7 @@ async function fetchOFFProduct(barcode, log = console.log) {
   return mapped;
 }
 
-/* ---------- STEP 2b: Popular (well-known) alternatives ---------- */
+/* ---------- STEP 2b: Popular alternatives ---------- */
 async function fetchOFFAlternatives(
   { barcode, category, categoryTag, countriesTags, baseKcal },
   log = console.log
@@ -341,7 +337,7 @@ async function fetchOFFAlternatives(
   return out;
 }
 
-/* ---------- NEW: STEP 2c LLM fallback alternatives (brand + title) ---------- */
+/* ---------- STEP 2c LLM fallback alternatives ---------- */
 async function fetchLLMAlternatives({
   brand,
   title,
@@ -367,12 +363,8 @@ async function fetchLLMAlternatives({
     messages: [
       {
         role: "system",
-        content: `You recommend close substitutes for a packaged food.
-Prefer SKUs from the SAME brand (e.g., different flavors/variants), then well-known competitors in the same category and market.
-Return concise product names like "Brand Product". Estimate calories_diff vs the given product when reasonable (negative means fewer kcal).
-If unsure, set calories_diff to null. Return up to 8.
-JSON ONLY:
-{ "alternatives":[{"name":"string","calories_diff":-40|null}, ...] }`,
+        content: `Recommend close substitutes. Prefer same-brand variants, then popular competitors. JSON ONLY:
+{ "alternatives":[{"name":"string","calories_diff":-40|null} ...] }`,
       },
       {
         role: "user",
@@ -415,7 +407,7 @@ Return ONLY JSON.`,
   }
 }
 
-/* ---------- STEP 3: Ask OpenAI for ingredients by Brand + Title (+photo) ---------- */
+/* ---------- STEP 3: Ingredients by Brand+Title (+photo) ---------- */
 async function fetchIngredientsByNameBrand({
   brand,
   title,
@@ -441,10 +433,7 @@ async function fetchIngredientsByNameBrand({
     messages: [
       {
         role: "system",
-        content: `You return a realistic ingredient list for a packaged food using brand + product name + category
-and the package photo. Use visual cues to infer flavor drivers (e.g., chocolate/cocoa/hazelnut).
-Return 8–12 simple, lowercase ingredients ordered by typical proportion (largest first).
-Avoid nutrition lines and claims. JSON ONLY:
+        content: `Return a realistic ingredient list for a packaged food using brand + product + category + photo. JSON ONLY:
 { "ingredients": ["string", ...] }`,
       },
       {
@@ -455,7 +444,7 @@ Avoid nutrition lines and claims. JSON ONLY:
             text: `brand+name: ${display || "(unknown)"}\ncategory: ${toStr(
               category,
               ""
-            )}\nmarket hint: ${market}\nIf the photo suggests chocolate/hazelnut layers, include "cocoa powder" or "chocolate" and "hazelnut paste".\nReturn only JSON.`,
+            )}\nmarket hint: ${market}\nReturn only JSON.`,
           },
           ...(imageUrl ? [{ type: "image_url", image_url: { url: imageUrl } }] : []),
         ],
@@ -486,11 +475,9 @@ Avoid nutrition lines and claims. JSON ONLY:
   }
 }
 
-/* ---------- STEP 4: Build ingredients breakdown (simple & scaled) ---------- */
+/* ---------- STEP 4: Build ingredients breakdown ---------- */
 function buildIngredientsBreakdownFromList(ingredientsArray, total_kcal) {
   if (!Array.isArray(ingredientsArray) || ingredientsArray.length === 0) return null;
-
-  // take top 6 unique ingredients
   const seen = new Set();
   const top = [];
   for (const name of ingredientsArray) {
@@ -511,10 +498,10 @@ function buildIngredientsBreakdownFromList(ingredientsArray, total_kcal) {
   const sum = out.reduce((s, x) => s + x.calories_kcal, 0);
   const diff = total_kcal - sum;
   if (diff && out.length) out[0] = { ...out[0], calories_kcal: out[0].calories_kcal + diff };
-  return out; // icons already "Utensils"
+  return out;
 }
 
-/* ----------------------- HEALTH PROFILE + PROMS ---------------------------- */
+/* ---------------- HEALTH PROFILE + PROMS ---------------- */
 const fetchUserHealthProfile = async (uid, addLog) => {
   try {
     const db = getFirestore();
@@ -548,19 +535,16 @@ const fetchUserHealthProfile = async (uid, addLog) => {
     return {};
   }
 };
-
 const pct = (v, limit) =>
   Number.isFinite(v) && Number.isFinite(limit) && limit > 0
     ? Math.round((v / limit) * 100)
     : null;
-
 const satFatCapFor = (level = "moderate") => {
   const m = String(level || "moderate").toLowerCase();
-  if (m.startsWith("low")) return 10; // g/day
+  if (m.startsWith("low")) return 10;
   if (m.startsWith("high")) return 20;
-  return 13; // default
+  return 13;
 };
-
 const looksCaffeinated = ({ title, ingredients_text, items }) => {
   const hay = [
     String(title || ""),
@@ -577,7 +561,6 @@ const buildHealthPrompts = ({ macros, profile, product }) => {
   const lines = [];
   const parts = {};
 
-  // Kidney
   if (profile?.kidneySettings) {
     const k = profile.kidneySettings;
     const sodiumLimit = Number.isFinite(+k.sodiumLimitMg) ? +k.sodiumLimitMg : 2000;
@@ -596,11 +579,10 @@ const buildHealthPrompts = ({ macros, profile, product }) => {
       if (pl.startsWith("low") && macros.protein_g > 25)
         kidney += ` Protein ${macros.protein_g} g may be high for your low-protein target.`;
     }
-    parts.kidney = kidney;      // ⟵ no emoji
-    lines.push(kidney);         // ⟵ no emoji
+    parts.kidney = kidney;
+    lines.push(kidney);
   }
 
-  // Heart
   if (profile?.heartSettings) {
     const h = profile.heartSettings;
     const cap = satFatCapFor(h.satFatLimit);
@@ -613,11 +595,10 @@ const buildHealthPrompts = ({ macros, profile, product }) => {
     } else {
       heart += `fat not visible on label.`;
     }
-    parts.heart = heart;        // ⟵ no emoji
-    lines.push(heart);          // ⟵ no emoji
+    parts.heart = heart;
+    lines.push(heart);
   }
 
-  // Diabetes
   if (profile?.diabetesSettings) {
     let diabetes = `Diabetes: `;
     const flags = [];
@@ -627,18 +608,17 @@ const buildHealthPrompts = ({ macros, profile, product }) => {
     diabetes += flags.length
       ? flags.join(", ") + ` — pair with lean protein/veg or halve the portion.`
       : `no major flags detected for this serving.`;
-    parts.diabetes = diabetes;  // ⟵ no emoji
-    lines.push(diabetes);       // ⟵ no emoji
+    parts.diabetes = diabetes;
+    lines.push(diabetes);
   }
 
-  // Habits
   const caffeinated = looksCaffeinated(product || {});
   if (profile?.habits?.reduceCoffee) {
     let coffee = `Coffee: you're cutting back. `;
     coffee += caffeinated
       ? `This looks caffeinated — try decaf or a smaller size today.`
       : `Nice — this seems caffeine-free.`;
-    parts.reduceCoffee = coffee; // ⟵ no emoji
+    parts.reduceCoffee = coffee;
     lines.push(coffee);
   }
   if (profile?.habits?.stopSmoking) {
@@ -646,7 +626,7 @@ const buildHealthPrompts = ({ macros, profile, product }) => {
     smoke += caffeinated
       ? `Coffee can be a trigger; swap with water or take a short walk after.`
       : `Use meals as a cue to breathe deeply instead of lighting up.`;
-    parts.stopSmoking = smoke;   // ⟵ no emoji
+    parts.stopSmoking = smoke;
     lines.push(smoke);
   }
 
@@ -675,19 +655,16 @@ const buildHealthPrompts = ({ macros, profile, product }) => {
   };
 };
 
-/* ---------------- /HEALTH PROFILE + PROMS ---------------- */
-
 /* ---------------- component ---------------- */
 export default forwardRef(function Scan_Barcode_Camera(
   { inCarousel = false, isActive = false, onScanResult, onScanList, openAiApiKey },
   ref
 ) {
   const userId = getAuth().currentUser?.uid || "anon";
-  const { register, present, isS2Open, isS3Open } = useSheets();
+  const { register, present /* isS2Open, isS3Open (kept, not gating) */ } = useSheets();
   const { setCurrentItemId, setCurrentItem } = useCurrentScannedItemId();
 
-  const shouldShowCamera = isS2Open && isActive && !isS3Open;
-
+  // ⚠️ Dev-only fallback; use secure backend in prod
   const OPENAI_API_KEY_FALLBACK =
     "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";
   const EFFECTIVE_OPENAI_KEY = openAiApiKey || OPENAI_API_KEY_FALLBACK;
@@ -713,7 +690,8 @@ export default forwardRef(function Scan_Barcode_Camera(
     markScannedNow,
     formatScannedAt,
     setIngredientsBreakdown,
-    setProms, // 👈 add proms to UI
+    scanBusy, beginScan, endScan,
+    setProms,
   } = useScanResults();
 
   function localDateId(d = new Date()) {
@@ -723,7 +701,7 @@ export default forwardRef(function Scan_Barcode_Camera(
     return `${y}-${m}-${day}`;
   }
 
-  // register page
+  // ✅ Register "s3" ONCE (same as your food camera)
   const didRegister = useRef(false);
   useEffect(() => {
     if (!register || didRegister.current) return;
@@ -736,11 +714,11 @@ export default forwardRef(function Scan_Barcode_Camera(
   const [loading, setLoading] = useState(false);
   const log = mkLogger(addLog);
 
-  /* ---------- Scanner frame animation (for optional scan line) ---------- */
+  /* ---------- Scanner frame animation (purely visual) ---------- */
   const frameSize = useMemo(() => Math.min(width(70), height(38)), []);
   const scanAnim = useRef(new Animated.Value(0)).current;
   useEffect(() => {
-    if (shouldShowCamera && !loading) {
+    if (!loading) {
       scanAnim.setValue(0);
       const loop = Animated.loop(
         Animated.sequence([
@@ -761,12 +739,13 @@ export default forwardRef(function Scan_Barcode_Camera(
       loop.start();
       return () => loop.stop();
     }
-  }, [shouldShowCamera, loading, scanAnim]);
+  }, [loading, scanAnim]);
 
   useImperativeHandle(ref, () => ({
     scan: async () => {
+      let _startedGlobal = false;
       try {
-        if (!isS2Open || !isActive || !cameraRef.current) {
+        if (!cameraRef.current) {
           Alert.alert("Camera not ready", "Open the BARCODE tab before scanning.");
           return;
         }
@@ -780,10 +759,12 @@ export default forwardRef(function Scan_Barcode_Camera(
         }
 
         resetScan();
+        beginScan();
+        _startedGlobal = true;
         setLoading(true);
         log("[BC] scan started");
 
-        // Small hold so AF locks
+        // small hold so AF locks
         await new Promise((r) => setTimeout(r, 900));
 
         const pic = await cameraRef.current.takePictureAsync({
@@ -796,11 +777,11 @@ export default forwardRef(function Scan_Barcode_Camera(
           return;
         }
 
-        // Show S3 immediately with photo; DO NOT push data yet
+        // 🔥 EXACTLY LIKE FOOD: set image → stamp → open s3 right away
         setImageUrl(pic.uri);
         markScannedNow();
+        log(`Stamped scan time: ${formatScannedAt?.() || "now"}`);
         present?.("s3");
-        log("[BC] S3 opened (LoadingPage), stamped:", formatScannedAt?.() || "now");
 
         // Upload
         log("[BC] uploading to Firebase…");
@@ -809,12 +790,12 @@ export default forwardRef(function Scan_Barcode_Camera(
           uid: userId,
         });
         setCloudUrl(downloadUrl);
-        log("[BC] upload done:", downloadUrl);
+        log("[BC] upload done");
 
-        // 🔹 Load health profile + habits (once per scan)
+        // Load health profile + habits
         const profile = await fetchUserHealthProfile(userId, addLog);
 
-        // OCR digits with OpenAI (robust)
+        // OCR digits with OpenAI
         log("[BC] OCR (OpenAI) …");
         const ean13 = await readDigitsFromImage({
           imageUrl: downloadUrl,
@@ -823,9 +804,10 @@ export default forwardRef(function Scan_Barcode_Camera(
         });
         log("[BC] OCR result (ean13):", ean13);
 
+        // Build analyzed object
+        let analyzed;
         if (!ean13) {
-          log("[BC] OCR failed → keep LoadingPage until we set a clean 'unknown' payload");
-          const unknown = {
+          analyzed = {
             barcode: "",
             title: "",
             brand: "",
@@ -846,96 +828,81 @@ export default forwardRef(function Scan_Barcode_Camera(
             category_tag: null,
             countries_tags: [],
           };
-          await pushFinalPayload({
-            analyzed: unknown,
-            pic,
-            downloadUrl,
-            userId,
-            profile, // pass through
-          });
-          return;
-        }
-
-        // OFF lookup
-        log("[BC] OFF lookup …");
-        let off = await fetchOFFProduct(ean13, log);
-        if (!off) {
-          log("[BC] OFF miss → return 'barcode-only' unknown payload");
-          off = {
-            barcode: ean13,
-            title: "",
-            brand: "",
-            size: "",
-            category: "unknown",
-            calories_kcal_total: 0,
-            protein_g: 0,
-            fat_g: 0,
-            sugar_g: 0,
-            carbs_g: 0,
-            fiber_g: 0,
-            sodium_mg: 0,
-            health_score: 0,
-            items: [],
-            alternatives: [],
-            ingredients_text: "",
-            ingredients_list: [],
-            category_tag: null,
-            countries_tags: [],
-          };
         } else {
-          // well-known alternatives (popularity + category/country awareness)
-          off.alternatives = await fetchOFFAlternatives(
-            {
-              barcode: off.barcode,
-              category: off.category,
-              categoryTag: off.category_tag,
-              countriesTags: off.countries_tags,
-              baseKcal: off.calories_kcal_total,
-            },
-            log
-          );
+          analyzed = await fetchOFFProduct(ean13, log);
+          if (!analyzed) {
+            analyzed = {
+              barcode: ean13,
+              title: "",
+              brand: "",
+              size: "",
+              category: "unknown",
+              calories_kcal_total: 0,
+              protein_g: 0,
+              fat_g: 0,
+              sugar_g: 0,
+              carbs_g: 0,
+              fiber_g: 0,
+              sodium_mg: 0,
+              health_score: 0,
+              items: [],
+              alternatives: [],
+              ingredients_text: "",
+              ingredients_list: [],
+              category_tag: null,
+              countries_tags: [],
+            };
+          } else {
+            analyzed.alternatives = await fetchOFFAlternatives(
+              {
+                barcode: analyzed.barcode,
+                category: analyzed.category,
+                categoryTag: analyzed.category_tag,
+                countriesTags: analyzed.countries_tags,
+                baseKcal: analyzed.calories_kcal_total,
+              },
+              log
+            );
 
-          // 🔁 Fallback to LLM if OFF gives too few
-          if (!off.alternatives || off.alternatives.length < 3) {
-            const llmAlts = await fetchLLMAlternatives({
-              brand: off.brand,
-              title: off.title,
-              category: off.category,
-              baseKcal: off.calories_kcal_total,
-              countriesTags: off.countries_tags,
-              apiKey:
-                (typeof openAiApiKey === "string" && openAiApiKey) ||
-                EFFECTIVE_OPENAI_KEY,
-              log,
-            });
+            if (!analyzed.alternatives || analyzed.alternatives.length < 3) {
+              const llmAlts = await fetchLLMAlternatives({
+                brand: analyzed.brand,
+                title: analyzed.title,
+                category: analyzed.category,
+                baseKcal: analyzed.calories_kcal_total,
+                countriesTags: analyzed.countries_tags,
+                apiKey: EFFECTIVE_OPENAI_KEY,
+                log,
+              });
 
-            // merge + dedupe by name
-            const merged = [...(off.alternatives || []), ...llmAlts];
-            const seen = new Set();
-            off.alternatives = merged
-              .filter((a) => {
-                const key = String(a?.name || "").toLowerCase().trim();
-                if (!key || seen.has(key)) return false;
-                seen.add(key);
-                return true;
-              })
-              .slice(0, 8);
-            log("[ALTS] merged:", off.alternatives);
+              const merged = [...(analyzed.alternatives || []), ...llmAlts];
+              const seen = new Set();
+              analyzed.alternatives = merged
+                .filter((a) => {
+                  const key = String(a?.name || "").toLowerCase().trim();
+                  if (!key || seen.has(key)) return false;
+                  seen.add(key);
+                  return true;
+                })
+                .slice(0, 8);
+              log("[ALTS] merged:", analyzed.alternatives);
+            }
           }
         }
 
         await pushFinalPayload({
-          analyzed: off,
+          analyzed,
           pic,
           downloadUrl,
           userId,
-          profile, // pass through
+          profile,
         });
       } catch (e) {
         log("[ERR] flow:", e?.message || String(e));
         Alert.alert("Barcode flow failed", e?.message || String(e));
       } finally {
-        setLoading(false); // camera overlay only
+        setLoading(false);
+        if (_startedGlobal) endScan();
         log("[BC] scan finished");
       }
     },
@@ -948,7 +915,7 @@ export default forwardRef(function Scan_Barcode_Camera(
     analyzed.size = clean(toStr(analyzed.size, ""));
     analyzed.category = clean(toStr(analyzed.category, "unknown"));
 
-    // Now (and only now) push to context — LoadingPage will flip after this
+    // push to context (this flips your LoadingPage to content once data arrives)
     setResult(analyzed);
     setRaw(JSON.stringify(analyzed));
 
@@ -974,7 +941,7 @@ export default forwardRef(function Scan_Barcode_Camera(
     setSodium(sodium);
     setHealthScore(health);
 
-    /* === INGREDIENTS via OFF OR LLM (Brand+Title + Photo) === */
+    // Ingredients (OFF or LLM fallback)
     const looksBad = (t) =>
       String(t || "").replace(/[^A-Za-zÄäÖöÜüßÀ-ÿ]/g, "").length < 3;
     let ingList = Array.isArray(analyzed?.ingredients_list)
@@ -986,10 +953,8 @@ export default forwardRef(function Scan_Barcode_Camera(
         title: analyzed?.title,
         category: analyzed?.category,
         countriesTags: analyzed?.countries_tags,
-        imageUrl: downloadUrl, // let LLM see the package
-        apiKey:
-          (typeof (openAiApiKey || "") === "string" ? openAiApiKey : "") ||
-          (typeof EFFECTIVE_OPENAI_KEY === "string" ? EFFECTIVE_OPENAI_KEY : ""),
+        imageUrl: downloadUrl,
+        apiKey: (typeof EFFECTIVE_OPENAI_KEY === "string" ? EFFECTIVE_OPENAI_KEY : ""),
         log: mkLogger(addLog),
       });
       if (llmIngredients.length) {
@@ -999,15 +964,13 @@ export default forwardRef(function Scan_Barcode_Camera(
       }
     }
 
-    // Build & save breakdown (evenly across top 6; scaled to total kcal)
-    const arr = ( ingList || [] ).map((i) => toStr(i?.text, "")).filter(Boolean);
+    const arr = (ingList || []).map((i) => toStr(i?.text, "")).filter(Boolean);
     const ingredientsBreakdown = buildIngredientsBreakdownFromList(
       arr,
       Number.isFinite(kcalSafe) ? kcalSafe : null
     );
     setIngredientsBreakdown?.(ingredientsBreakdown);
 
-    // Firestore-friendly ingredients
     const ingredients_full = Array.isArray(ingredientsBreakdown)
       ? ingredientsBreakdown.map((x) => ({
           name: toStr(x?.name, ""),
@@ -1015,13 +978,14 @@ export default forwardRef(function Scan_Barcode_Camera(
         }))
       : [];
 
-    // ---------- Items list (keep for compatibility) ----------
+    // Items (fallback to a single item if empty)
     const items = Array.isArray(analyzed?.items) ? analyzed.items : [];
     const itemsSafe = items.map((it) => ({
       name: toStr(it?.name, "Item"),
       subtitle: toStr(it?.subtitle, ""),
       calories_kcal: toNum(it?.calories_kcal, 0),
-      icon: it?.icon && String(it.icon).trim().length ? String(it.icon).trim() : "Utensils",
+      icon:
+        it?.icon && String(it.icon).trim().length ? String(it.icon).trim() : "Utensils",
     }));
     if (!itemsSafe.length) {
       itemsSafe.push({
@@ -1032,7 +996,7 @@ export default forwardRef(function Scan_Barcode_Camera(
       });
     }
 
-    // Build health proms from profile + macros
+    // Health proms
     const proms = buildHealthPrompts({
       macros: {
         sodium_mg: sodium,
@@ -1043,20 +1007,23 @@ export default forwardRef(function Scan_Barcode_Camera(
         protein_g: protein,
       },
       profile,
-      product: { title: titleSafe, ingredients_text: analyzed?.ingredients_text || "", items: itemsSafe },
+      product: {
+        title: titleSafe,
+        ingredients_text: analyzed?.ingredients_text || "",
+        items: itemsSafe,
+      },
     });
     setProms?.(proms);
 
-    // ---------- RECONCILE INGREDIENTS (as constructed above) ----------
-    const baseBrand = toStr(analyzed?.brand, "");
+    // Ingredient cards
     const reconciledIngredients = ingredients_full.length
       ? ingredients_full
       : Array.isArray(ingredientsBreakdown)
-        ? ingredientsBreakdown.map((x) => ({
-            name: toStr(x?.name, ""),
-            estimated_kcal: toNum(x?.calories_kcal, 0),
-          }))
-        : [];
+      ? ingredientsBreakdown.map((x) => ({
+          name: toStr(x?.name, ""),
+          estimated_kcal: toNum(x?.calories_kcal, 0),
+        }))
+      : [];
 
     const perIngredientList = reconciledIngredients.map((ing) => ({
       name: toStr(ing?.name, ""),
@@ -1066,10 +1033,11 @@ export default forwardRef(function Scan_Barcode_Camera(
       perIngredientList.map((i) => [i.name, i.estimated_kcal])
     );
 
-    // 👉 Fill the UI list with ALL ingredients (card renderer unchanged)
     const ingredientCards = reconciledIngredients.map((ing) => ({
       label: ing.name,
-      amt: Number.isFinite(ing.estimated_kcal) ? `+${Math.round(ing.estimated_kcal)} cal` : "+0 cal",
+      amt: Number.isFinite(ing.estimated_kcal)
+        ? `+${Math.round(ing.estimated_kcal)} cal`
+        : "+0 cal",
       icon: "Utensils",
       IconCOlor: "#1E67FF",
       iconColorBg: "#EEF3FF",
@@ -1078,7 +1046,8 @@ export default forwardRef(function Scan_Barcode_Camera(
     setList?.(ingredientCards);
     onScanList?.(ingredientCards);
 
-    // ✅ Alternatives — group by same brand vs other brands (no images)
+    // Alternatives (grouped)
+    const baseBrand = toStr(analyzed?.brand, "");
     const rawAlts = Array.isArray(analyzed?.alternatives) ? analyzed.alternatives : [];
     const sameBrand = [];
     const otherBrands = [];
@@ -1088,7 +1057,10 @@ export default forwardRef(function Scan_Barcode_Camera(
       const { brand: detectedBrand, rest } = splitBrandFromDisplay(display, baseBrand);
       const variant = toStr(a?.flavor_or_variant || "", "");
       const diff = Number.isFinite(+a?.calories_diff) ? +a.calories_diff : NaN;
-      const kcal = Number.isFinite(kcalSafe) && Number.isFinite(diff) ? Math.round(kcalSafe + diff) : NaN;
+      const kcal =
+        Number.isFinite(kcalSafe) && Number.isFinite(diff)
+          ? Math.round(kcalSafe + diff)
+          : NaN;
       const bucket = normalizeBucket(a?.bucket) ?? deriveBucket(kcal, kcalSafe);
 
       const normalized = {
@@ -1099,16 +1071,11 @@ export default forwardRef(function Scan_Barcode_Camera(
         bucket,
       };
 
-      if (baseBrand && norm(detectedBrand) === norm(baseBrand)) {
-        sameBrand.push(normalized);
-      } else {
-        otherBrands.push(normalized);
-      }
+      if (baseBrand && norm(detectedBrand) === norm(baseBrand)) sameBrand.push(normalized);
+      else otherBrands.push(normalized);
     }
 
     const ALL_ALTS = [...sameBrand, ...otherBrands];
-
-    // Build a mixed UI list: 5 lower + 2 similar + 5 higher
     const lessAlts = ALL_ALTS.filter((a) => a.bucket === "lower").slice(0, 5);
     const simAlts  = ALL_ALTS.filter((a) => a.bucket === "similar").slice(0, 2);
     const moreAlts = ALL_ALTS.filter((a) => a.bucket === "higher").slice(0, 5);
@@ -1118,13 +1085,13 @@ export default forwardRef(function Scan_Barcode_Camera(
       amt: Number.isFinite(p.calories_per_package_kcal)
         ? `${p.calories_per_package_kcal}cal`
         : "—",
-      moreOrLess: p.bucket === "lower" ? "less" : p.bucket === "higher" ? "more" : "similar",
+      moreOrLess:
+        p.bucket === "lower" ? "less" : p.bucket === "higher" ? "more" : "similar",
     });
 
     const flatCards = [...lessAlts, ...simAlts, ...moreAlts].map(toCard);
     setAlternatives?.(flatCards);
 
-    // quick counts saved in Firestore
     const alternatives_summary = {
       lower: lessAlts.length,
       similar: simAlts.length,
@@ -1147,10 +1114,8 @@ export default forwardRef(function Scan_Barcode_Camera(
       sodium_mg: sodium,
       health_score: health,
 
-      // arrays (use reconciled ingredients)
       items: itemsSafe,
       ingredients_full: reconciledIngredients,
-      // also handy: flattened per-ingredient kcal list + map
       ingredients_kcal_list: perIngredientList,
       ingredients_kcal_map: perIngredientKcalMap,
 
@@ -1162,35 +1127,30 @@ export default forwardRef(function Scan_Barcode_Camera(
       },
       alternatives_flat: flatCards,
 
-      // 👇 personalized health prompts + profile used
       proms,
       profile_used: proms?.profile_used || null,
 
-      // media + time
       image_local_uri: pic?.uri || null,
       image_cloud_url: downloadUrl || null,
       scanned_at_pretty: formatScannedAt?.() || null,
       created_at: serverTimestamp(),
 
-      // raw/model
       raw: JSON.stringify(analyzed),
       result: analyzed,
     };
 
-    // 🔹 Save to RecentlyEaten and set current item id
+    // Save
     try {
       const db = getFirestore();
       const reCol = collection(db, "users", userId, "RecentlyEaten");
       const docRef = await addDoc(reCol, basePayload);
-      addLog?.("[BC] saved to Firestore (RecentlyEaten)");
-      // update current item context
       setCurrentItemId?.(docRef.id);
       setCurrentItem?.({ id: docRef.id, ...basePayload });
+      addLog?.("[BC] saved to Firestore (RecentlyEaten)");
     } catch (err) {
       addLog?.(`[ERR] Firestore save RecentlyEaten: ${err?.message || err}`);
     }
 
-    // 🔹 Save to Today/<dateId>/List
     try {
       const db = getFirestore();
       const dateId = localDateId();
@@ -1202,16 +1162,13 @@ export default forwardRef(function Scan_Barcode_Camera(
       Alert.alert("Firestore save failed", err?.message || String(err));
     }
 
-    // 🔹 Save to AllTimeLineScan
     try {
       const db = getFirestore();
       const atlCol = collection(db, "users", userId, "AllTimeLineScan");
       await addDoc(atlCol, basePayload);
       addLog?.("Saved scan to Firestore (AllTimeLineScan)");
     } catch (err) {
-      addLog?.(
-        `[ERR] Firestore save AllTimeLineScan: ${err?.message || err}`
-      );
+      addLog?.(`[ERR] Firestore save AllTimeLineScan: ${err?.message || err}`);
       Alert.alert("Firestore save failed", err?.message || String(err));
     }
 
@@ -1237,7 +1194,7 @@ export default forwardRef(function Scan_Barcode_Camera(
 
   /* ---------- overlay geometry ---------- */
   const frameLeft = (width(100) - frameSize) / 2;
-  const frameTop = height(32); // push down a bit from the notch
+  const frameTop = height(32);
   const scanTranslateY = scanAnim.interpolate({
     inputRange: [0, 1],
     outputRange: [0, frameSize - 4],
@@ -1246,192 +1203,55 @@ export default forwardRef(function Scan_Barcode_Camera(
   return (
     <View style={{ height: "100%", width: "100%" }}>
       <View style={{ height: height(100), width: width(100), backgroundColor: "#000" }}>
-        {shouldShowCamera ? (
-          <View
+        {/* Always show camera (like the food camera) */}
+        <View
+          style={{ height: "100%", width: "100%" }}
+          pointerEvents={inCarousel ? "none" : "auto"}
+        >
+          <CameraView
+            ref={cameraRef}
             style={{ height: "100%", width: "100%" }}
-            pointerEvents={inCarousel ? "none" : "auto"}
-          >
-            <CameraView
-              ref={cameraRef}
-              style={{ height: "100%", width: "100%" }}
-              facing="back"
-              flash="off"
-              autofocus="on"
-              onCameraReady={() => addLog("Camera ready")}
-            />
-          </View>
-        ) : null}
+            facing="back"
+            flash="off"
+            autofocus="on"
+            onCameraReady={() => log("Camera ready")}
+          />
+        </View>
 
-        {/* Scanner overlay like the FIRST image */}
-        {shouldShowCamera && (
-          <View pointerEvents="none" style={StyleSheet.absoluteFill}>
-            {/* Dim around the frame */}
-            <View
-              style={{
-                position: "absolute",
-                left: 0,
-                right: 0,
-                top: 0,
-                height: frameTop,
-                backgroundColor: "rgba(0,0,0,0.45)",
-              }}
-            />
-            <View
-              style={{
-                position: "absolute",
-                left: 0,
-                right: 0,
-                top: frameTop + frameSize,
-                bottom: 0,
-                backgroundColor: "rgba(0,0,0,0.45)",
-              }}
-            />
-            <View
-              style={{
-                position: "absolute",
-                left: 0,
-                top: frameTop,
-                width: frameLeft,
-                height: frameSize,
-                backgroundColor: "rgba(0,0,0,0.45)",
-              }}
-            />
-            <View
-              style={{
-                position: "absolute",
-                right: 0,
-                top: frameTop,
-                width: frameLeft,
-                height: frameSize,
-                backgroundColor: "rgba(0,0,0,0.45)",
-              }}
-            />
+        {/* Scanner overlay */}
+        <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+          {/* Dim around frame */}
+          <View style={{ position: "absolute", left: 0, right: 0, top: 0, height: frameTop, backgroundColor: "rgba(0,0,0,0.45)" }} />
+          <View style={{ position: "absolute", left: 0, right: 0, top: frameTop + frameSize, bottom: 0, backgroundColor: "rgba(0,0,0,0.45)" }} />
+          <View style={{ position: "absolute", left: 0, top: frameTop, width: frameLeft, height: frameSize, backgroundColor: "rgba(0,0,0,0.45)" }} />
+          <View style={{ position: "absolute", right: 0, top: frameTop, width: frameLeft, height: frameSize, backgroundColor: "rgba(0,0,0,0.45)" }} />
+          {/* Frame */}
+          <View style={{ position: "absolute", left: frameLeft, top: frameTop, width: frameSize, height: frameSize, borderRadius: 14, borderColor: "rgba(255,255,255,0.2)", borderWidth: 1 }} />
+          {/* Corners */}
+          <View style={{ position: "absolute", left: frameLeft - 2, top: frameTop - 2, width: 40, height: 6, backgroundColor: "#fff", borderTopLeftRadius: 4 }} />
+          <View style={{ position: "absolute", left: frameLeft - 2, top: frameTop - 2, width: 6, height: 40, backgroundColor: "#fff", borderTopLeftRadius: 4 }} />
+          <View style={{ position: "absolute", left: frameLeft + frameSize - 38, top: frameTop - 2, width: 40, height: 6, backgroundColor: "#fff", borderTopRightRadius: 4 }} />
+          <View style={{ position: "absolute", left: frameLeft + frameSize - 4, top: frameTop - 2, width: 6, height: 40, backgroundColor: "#fff", borderTopRightRadius: 4 }} />
+          <View style={{ position: "absolute", left: frameLeft - 2, top: frameTop + frameSize - 4, width: 40, height: 6, backgroundColor: "#fff", borderBottomLeftRadius: 4 }} />
+          <View style={{ position: "absolute", left: frameLeft - 2, top: frameTop + frameSize - 38, width: 6, height: 40, backgroundColor: "#fff", borderBottomLeftRadius: 4 }} />
+          <View style={{ position: "absolute", left: frameLeft + frameSize - 38, top: frameTop + frameSize - 4, width: 40, height: 6, backgroundColor: "#fff", borderBottomRightRadius: 4 }} />
+          <View style={{ position: "absolute", left: frameLeft + frameSize - 4, top: frameTop + frameSize - 38, width: 6, height: 40, backgroundColor: "#fff", borderBottomRightRadius: 4 }} />
+          {/* Optional scan line
+          <Animated.View
+            style={{
+              position: "absolute",
+              left: frameLeft + 10,
+              width: frameSize - 20,
+              top: frameTop,
+              height: 4,
+              borderRadius: 2,
+              backgroundColor: "#FF3B30",
+              transform: [{ translateY: scanTranslateY }],
+            }}
+          /> */}
+        </View>
 
-            {/* Frame container */}
-            <View
-              style={{
-                position: "absolute",
-                left: frameLeft,
-                top: frameTop,
-                width: frameSize,
-                height: frameSize,
-                borderRadius: 14,
-                borderColor: "rgba(255,255,255,0.2)",
-                borderWidth: 1,
-              }}
-            />
-
-            {/* Corners */}
-            {/* top-left */}
-            <View
-              style={{
-                position: "absolute",
-                left: frameLeft - 2,
-                top: frameTop - 2,
-                width: 40,
-                height: 6,
-                backgroundColor: "#fff",
-                borderTopLeftRadius: 4,
-              }}
-            />
-            <View
-              style={{
-                position: "absolute",
-                left: frameLeft - 2,
-                top: frameTop - 2,
-                width: 6,
-                height: 40,
-                backgroundColor: "#fff",
-                borderTopLeftRadius: 4,
-              }}
-            />
-            {/* top-right */}
-            <View
-              style={{
-                position: "absolute",
-                left: frameLeft + frameSize - 38,
-                top: frameTop - 2,
-                width: 40,
-                height: 6,
-                backgroundColor: "#fff",
-                borderTopRightRadius: 4,
-              }}
-            />
-            <View
-              style={{
-                position: "absolute",
-                left: frameLeft + frameSize - 4,
-                top: frameTop - 2,
-                width: 6,
-                height: 40,
-                backgroundColor: "#fff",
-                borderTopRightRadius: 4,
-              }}
-            />
-            {/* bottom-left */}
-            <View
-              style={{
-                position: "absolute",
-                left: frameLeft - 2,
-                top: frameTop + frameSize - 4,
-                width: 40,
-                height: 6,
-                backgroundColor: "#fff",
-                borderBottomLeftRadius: 4,
-              }}
-            />
-            <View
-              style={{
-                position: "absolute",
-                left: frameLeft - 2,
-                top: frameTop + frameSize - 38,
-                width: 6,
-                height: 40,
-                backgroundColor: "#fff",
-                borderBottomLeftRadius: 4,
-              }}
-            />
-            {/* bottom-right */}
-            <View
-              style={{
-                position: "absolute",
-                left: frameLeft + frameSize - 38,
-                top: frameTop + frameSize - 4,
-                width: 40,
-                height: 6,
-                backgroundColor: "#fff",
-                borderBottomRightRadius: 4,
-              }}
-            />
-            <View
-              style={{
-                position: "absolute",
-                left: frameLeft + frameSize - 4,
-                top: frameTop + frameSize - 38,
-                width: 6,
-                height: 40,
-                backgroundColor: "#fff",
-                borderBottomRightRadius: 4,
-              }}
-            />
-
-            {/* Animated scan line (kept off to match your latest) */}
-            {/* <Animated.View
-              style={{
-                position: "absolute",
-                left: frameLeft + 10,
-                width: frameSize - 20,
-                top: frameTop,
-                height: 4,
-                borderRadius: 2,
-                backgroundColor: "#FF3B30",
-                transform: [{ translateY: scanTranslateY }],
-              }}
-            /> */}
-          </View>
-        )}
-
-        {loading && (
+        {(loading || scanBusy) && (
           <View style={styles.loadingOverlay} pointerEvents="none">
             <ActivityIndicator size="large" color="#fff" />
             <Text style={{ color: "#fff", marginTop: 12, fontWeight: "700" }}>

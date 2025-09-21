@@ -173,9 +173,7 @@ export default function SheetsHost() {
           {isS2Open && !isS3Open ? (
             <MemoCameraCarousel key="camera-mounted" />
           ) : (
-            <View key="camera-unmounted" style={{ padding: 16, gap: 10 }}>
-              <Text>{isS2Open ? "Results are open — camera paused" : "Sheet 2 closed"}</Text>
-            </View>
+            null
           )}
         </View>
 
@@ -201,7 +199,7 @@ export default function SheetsHost() {
             onChange={(index) => setIsS6Open(typeof index === "number" && index >= 0)}
             onDismiss={() => setIsS6Open(false)}
           >
-            {isS6Open ? <MemoEditScanFood /> : <View style={{ padding: 16 }} />}
+            <MemoEditScanFood />
           </TrueSheet>
 
           {/* s5 (Add Expiration) */}

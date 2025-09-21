@@ -5,11 +5,11 @@ import Purchases, { LOG_LEVEL } from "react-native-purchases";
 
 // RN Firebase v22 modular API
 import {
-    createUserWithEmailAndPassword,
-    getAuth,
-    onAuthStateChanged,
-    signInWithEmailAndPassword,
-    signOut,
+  createUserWithEmailAndPassword,
+  getAuth,
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  signOut,
 } from "@react-native-firebase/auth";
 import { doc, getDoc, getFirestore } from "@react-native-firebase/firestore";
 
@@ -25,6 +25,9 @@ export function RevenueCatProvider({ children }) {
   const [appUserID, setAppUserID] = useState("");     // RC user id (uid or $RCAnonymousID)
   const [firebaseUID, setFirebaseUID] = useState(""); // current Firebase uid
   const [loading, setLoading] = useState(true);
+  const [ClickedOnBtn, setClickedOnBtn] = useState(false)
+
+
 
   const auth = getAuth();
   const db = getFirestore();
@@ -269,7 +272,8 @@ export function RevenueCatProvider({ children }) {
     checkPremium,
     buyMonthly,
     restoreRC,
-
+    ClickedOnBtn, 
+    setClickedOnBtn,
     // attribute sync (if you update Firestore profile and want to push to RC)
     syncRevenueCatAttributes,
 

@@ -1,29 +1,45 @@
 // PaywallView.js
 import { useVideoPlayer, VideoView } from "expo-video";
 import { X } from "lucide-react-native";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Pressable, Text, TouchableOpacity, View } from "react-native";
-import Purchases from "react-native-purchases";
+import Purchases, { PURCHASES_ERROR_CODE } from "react-native-purchases";
 import { height, size, width } from "react-native-responsive-sizes";
 import AppBlurBottom from "../(auth)/AppBlurBottom";
 import AppBlurHeader2 from "../Context/AppBlurHeader2";
 import { useRevenueCat } from "./RevenueCatContext";
 
 export default function PaywallView({ onClose }) {
-  const { isPremium, isTrial, customerInfo, refreshCustomerInfo } = useRevenueCat();
+  const {
+    isPremium,
+    isTrial,
+    refreshCustomerInfo,
+    // optional: you said you track this in context
+    ClickedOnBtn,
+    setClickedOnBtn,
+  } = useRevenueCat();
+
   const [loading, setLoading] = useState(true);
   const [monthly, setMonthly] = useState(null);
   const [error, setError] = useState("");
+  const [purchasing, setPurchasing] = useState(false);
 
-  // helper to safely call onClose if provided
+  const ENTITLEMENT_KEY = "premium"; // <-- set this to your actual entitlement id in RevenueCat
   const handleClose = onClose || (() => {});
 
+  // fetch offerings
   useEffect(() => {
     let mounted = true;
     (async () => {
       try {
+        setError("");
         const offerings = await Purchases.getOfferings();
-        const m = offerings?.current?.monthly || null;
+        // Prefer the explicit "monthly" package if present; fall back to first available package
+        const m =
+          offerings?.current?.monthly ||
+          offerings?.current?.availablePackages?.find((p) => p.identifier?.includes("MONTHLY")) ||
+          offerings?.current?.availablePackages?.[0] ||
+          null;
         if (mounted) setMonthly(m);
       } catch (e) {
         if (mounted) setError(e?.message || String(e));
@@ -36,25 +52,59 @@ export default function PaywallView({ onClose }) {
     };
   }, []);
 
-  // Auto-close if user becomes premium (after purchase/restore or if already premium)
+  // close if premium flips true (after purchase/restore)
   useEffect(() => {
     if (isPremium) {
       handleClose();
+      // if you track the click flag, reset it so we don't auto-launch again later
+      setClickedOnBtn?.(false);
     }
-  }, [isPremium]); // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPremium]);
+
+  // Auto-launch Apple sheet once monthly is ready if you came here from a button click
+  const autoLaunched = useRef(false);
+  useEffect(() => {
+    if (!loading && monthly && !isPremium && ClickedOnBtn && !autoLaunched.current) {
+      autoLaunched.current = true;
+      onBuy();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, monthly, isPremium, ClickedOnBtn]);
 
   const onBuy = async () => {
+    if (!monthly || purchasing) return;
     setError("");
+    setPurchasing(true);
     try {
-      if (!monthly) return;
-      const { customerInfo } = await Purchases.purchasePackage(monthly);
+      // This opens Apple’s payment sheet
+      const { customerInfo: ci } = await Purchases.purchasePackage(monthly);
+
+      // Optional but recommended to sync your context
       await refreshCustomerInfo();
-      const active = !!customerInfo?.entitlements?.active?.["premium_monthly"];
-      if (!active) setError("Purchase did not activate entitlement.");
-      // if active, isPremium will flip to true and auto-close via effect
+
+      // Verify entitlement immediately using the returned object
+      const active = !!ci?.entitlements?.active?.[ENTITLEMENT_KEY];
+      if (!active) {
+        setError("Purchase did not activate entitlement.");
+        return;
+      }
+      // isPremium should flip true in your context → auto-close effect runs
     } catch (e) {
-      if (e?.userCancelled) return;
-      setError(e?.message || "Purchase failed");
+      // Known RevenueCat codes
+      if (e?.code === PURCHASES_ERROR_CODE.PURCHASE_CANCELLED_ERROR || e?.userCancelled) {
+        // user cancelled; no error message needed
+      } else if (e?.code === PURCHASES_ERROR_CODE.PURCHASE_NOT_ALLOWED_ERROR) {
+        setError("Purchases not allowed on this device.");
+      } else if (e?.code === PURCHASES_ERROR_CODE.PURCHASE_INVALID_ERROR) {
+        setError("Invalid purchase. Please try again.");
+      } else if (e?.code === PURCHASES_ERROR_CODE.PAYMENT_PENDING_ERROR) {
+        setError("Payment pending. You’ll be unlocked once it completes.");
+      } else {
+        setError(e?.message || "Purchase failed");
+      }
+    } finally {
+      setPurchasing(false);
     }
   };
 
@@ -63,7 +113,6 @@ export default function PaywallView({ onClose }) {
     try {
       await Purchases.restorePurchases();
       await refreshCustomerInfo();
-      // if entitlement becomes active, isPremium flips true and auto-close triggers
     } catch (e) {
       setError(e?.message || "Restore failed");
     }
@@ -134,7 +183,10 @@ export default function PaywallView({ onClose }) {
           }}
         >
           <TouchableOpacity
-            onPress={handleClose}
+            onPress={() => {
+              setClickedOnBtn?.(false);
+              handleClose();
+            }}
             style={{
               height: size(50),
               width: size(50),
@@ -201,7 +253,7 @@ export default function PaywallView({ onClose }) {
 
         {/* Primary CTA */}
         <TouchableOpacity
-          disabled={!monthly}
+          disabled={!monthly || purchasing}
           onPress={onBuy}
           style={{
             height: size(60),
@@ -213,7 +265,7 @@ export default function PaywallView({ onClose }) {
             bottom: height(17),
             backgroundColor: "#000",
             borderRadius: size(15),
-            opacity: monthly ? 1 : 0.5,
+            opacity: monthly && !purchasing ? 1 : 0.5,
           }}
         >
           <Text
@@ -224,13 +276,14 @@ export default function PaywallView({ onClose }) {
               alignSelf: "center",
             }}
           >
-            Continue
+            {purchasing ? "Processing..." : "Continue"}
           </Text>
         </TouchableOpacity>
 
         {/* Restore CTA */}
         <TouchableOpacity
           onPress={onRestore}
+          disabled={purchasing}
           style={{
             height: size(60),
             width: "90%",
@@ -242,6 +295,7 @@ export default function PaywallView({ onClose }) {
             borderColor: "#000",
             borderWidth: 1,
             borderRadius: size(15),
+            opacity: purchasing ? 0.5 : 1,
           }}
         >
           <Text

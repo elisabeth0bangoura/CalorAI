@@ -1,6 +1,14 @@
 // ./Cameras/Home.js
 import { getAuth, onAuthStateChanged } from "@react-native-firebase/auth";
-import { collection, doc, getFirestore, onSnapshot } from "@react-native-firebase/firestore";
+import {
+  collection,
+  deleteDoc,
+  doc,
+  getDocs,
+  getFirestore,
+  onSnapshot,
+  setDoc,
+} from "@react-native-firebase/firestore";
 
 import { useCurrentScannedItemId } from "@/app/Context/CurrentScannedItemIdContext";
 import { useDailyLeft } from "@/app/Context/DailyLeftContext";
@@ -18,6 +26,7 @@ import {
   Animated,
   InteractionManager,
   Platform,
+  Pressable,
   Text,
   TouchableOpacity,
   View,
@@ -30,6 +39,8 @@ import RollingMetric from "../../RollingMetric";
 import { Image } from "expo-image";
 import { CircularProgressBase } from "react-native-circular-progress-indicator";
 import TwoRowMonthlyHeatmap from "./WeeklyCalendar";
+
+import ContextMenu from "react-native-context-menu-view";
 
 import {
   Candy,
@@ -128,6 +139,63 @@ const ProgressBar = memo(function ProgressBar({
   );
 });
 
+/* --------------------- Local Day/Total helpers --------------------- */
+const getLocalDayKey = (d = new Date()) => {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${dd}`;
+};
+
+// Sum meals in users/{uid}/Today/{dayKey} and write users/{uid}/Daily/{dayKey}
+const recalcAndWriteDailyTotals = async (uid) => {
+  if (!uid) return;
+  const db = getFirestore();
+  const dayKey = getLocalDayKey();
+  const todayCol = collection(db, "users", uid, "Today", dayKey);
+
+  const snap = await getDocs(todayCol);
+
+  let calories = 0,
+    protein = 0,
+    carbs = 0,
+    fat = 0,
+    fiber = 0,
+    sugar = 0,
+    sodium = 0;
+
+  snap.forEach((docSnap) => {
+    const d = docSnap.data() || {};
+    const c = Number(d?.calories_kcal_total ?? d?.items?.[0]?.calories_kcal ?? 0);
+    calories += Number.isFinite(c) ? c : 0;
+
+    protein += Number.isFinite(Number(d?.protein_g)) ? Number(d?.protein_g) : 0;
+    carbs   += Number.isFinite(Number(d?.carbs_g))   ? Number(d?.carbs_g)   : 0;
+    fat     += Number.isFinite(Number(d?.fat_g))     ? Number(d?.fat_g)     : 0;
+    fiber   += Number.isFinite(Number(d?.fiber_g))   ? Number(d?.fiber_g)   : 0;
+    sugar   += Number.isFinite(Number(d?.sugar_g))   ? Number(d?.sugar_g)   : 0;
+    sodium  += Number.isFinite(Number(d?.sodium_mg)) ? Number(d?.sodium_mg) : 0;
+  });
+
+  const dailyRef = doc(db, "users", uid, "Daily", dayKey);
+  await setDoc(
+    dailyRef,
+    {
+      dayKey,
+      caloriesToday: Math.round(calories),
+      proteinToday: Math.round(protein),
+      carbsToday: Math.round(carbs),
+      fatToday: Math.round(fat),
+      fiberToday: Math.round(fiber),
+      sugarToday: Math.round(sugar),
+      sodiumToday: Math.round(sodium),
+      updated_at: new Date(),
+    },
+    { merge: true }
+  );
+};
+/* ------------------------------------------------------------------ */
+
 /* ---------- Header (memoized) ---------- */
 const HeaderView = memo(function HeaderView({
   userId,
@@ -141,12 +209,10 @@ const HeaderView = memo(function HeaderView({
   const [showSwiper, setShowSwiper] = useState(false);
   const [showHeatmap, setShowHeatmap] = useState(false);
 
-  // Pager refs/state
   const pagerRef = useRef(null);
   const [pagerIndex, setPagerIndex] = useState(0);
   const lastHapticTsRef = useRef(0);
 
-  // convert "left" to current% of goal (0–100)
   const pctFromLeft = useCallback((left, goal) => {
     const g = Math.max(1, Number(goal || 1));
     const l = Math.max(0, Number(left || 0));
@@ -154,7 +220,6 @@ const HeaderView = memo(function HeaderView({
     return clampPct(current, g);
   }, []);
 
-  // staggered animation props
   const animProps = useCallback(
     (i = 0) => {
       if (!animateRings) return { duration: 0, delay: 0 };
@@ -175,7 +240,6 @@ const HeaderView = memo(function HeaderView({
 
   const { present } = useSheets();
 
-  // Lazy-mount heavy UI ONLY when not sleeping
   useEffect(() => {
     if (sleeping) {
       setShowSwiper(false);
@@ -204,7 +268,6 @@ const HeaderView = memo(function HeaderView({
     }
   }, []);
 
-  /* ------------------ CARD RENDERERS ------------------ */
   const widthForCount = useCallback(
     (count) => (count === 1 ? "100%" : count === 2 ? "48%" : "30%"),
     []
@@ -518,8 +581,6 @@ const HeaderView = memo(function HeaderView({
   );
 
   /* ----------------- DYNAMIC PACKING ----------------- */
-
-  // half-width widgets (2 per row) in priority order
   const halfPool = useMemo(() => {
     const out = [];
     if (enabledOr("coffee", true)) out.push("coffee");
@@ -531,9 +592,8 @@ const HeaderView = memo(function HeaderView({
     return out;
   }, [enabledOr]);
 
-  // small widgets (3 per row)
   const smallPool = useMemo(() => {
-    const out = ["water"]; // water always shown in your UI
+    const out = ["water"];
     if (enabledOr("protein", true)) out.push("protein");
     if (enabledOr("carbs", true)) out.push("carbs");
     return out;
@@ -542,13 +602,11 @@ const HeaderView = memo(function HeaderView({
   const cigsEnabled = enabledOr("cigarette", true);
   const healthEnabled = true;
 
-  // Build slides packed forward
   const slides = useMemo(() => {
     const take = (arr, start, n) => arr.slice(start, start + Math.max(0, n));
     let halfIdx = 0;
     let smallIdx = 0;
 
-    // slide 0
     const slide0 = [];
     const s0Half = take(halfPool, halfIdx, 2);
     halfIdx += s0Half.length;
@@ -558,14 +616,12 @@ const HeaderView = memo(function HeaderView({
     smallIdx += s0Small.length;
     if (s0Small.length) slide0.push({ type: "small", items: s0Small });
 
-    // slide 1
     const slide1 = [];
     const s1Half = take(halfPool, halfIdx, 2);
     halfIdx += s1Half.length;
     if (s1Half.length) slide1.push({ type: "half", items: s1Half });
     if (healthEnabled) slide1.push({ type: "wide", items: ["health"] });
 
-    // slide 2
     const slide2 = [];
     const s2Half = take(halfPool, halfIdx, 2);
     halfIdx += s2Half.length;
@@ -575,13 +631,11 @@ const HeaderView = memo(function HeaderView({
     return [slide0, slide1, slide2];
   }, [halfPool, smallPool, cigsEnabled]);
 
-  // 🔥 REMOVE EMPTY SLIDES
   const filteredSlides = useMemo(
     () => slides.filter((rows) => rows.length > 0),
     [slides]
   );
 
-  // keep pager index in range when slides change
   useEffect(() => {
     if (filteredSlides.length === 0) {
       setPagerIndex(0);
@@ -590,7 +644,6 @@ const HeaderView = memo(function HeaderView({
     if (pagerIndex >= filteredSlides.length) {
       const next = Math.max(0, filteredSlides.length - 1);
       setPagerIndex(next);
-      // sync the PagerView
       requestAnimationFrame(() => {
         try {
           pagerRef.current?.setPageWithoutAnimation?.(next);
@@ -599,7 +652,6 @@ const HeaderView = memo(function HeaderView({
     }
   }, [filteredSlides.length, pagerIndex]);
 
-  /* ------------------- RENDER ROWS ------------------- */
   const halfMeta = {
     sugar: {
       label: "Sugar",
@@ -636,7 +688,6 @@ const HeaderView = memo(function HeaderView({
   };
 
   const smallMeta = {
-    // keep your text for the water card (“Protein left”)
     water: {
       label: "Protein",
       value: vals.waterLeft,
@@ -945,7 +996,6 @@ const HeaderView = memo(function HeaderView({
           
           </>
         ) : (
-          // no slides at all (very unlikely)
           <View
             style={{
               height: height(55),
@@ -973,9 +1023,7 @@ const HeaderView = memo(function HeaderView({
   );
 });
 
-
-
-// --- helpers ---
+/* ------------------------- helpers ------------------------- */
 const toDateFromAny = (t) => {
   if (!t) return null;
   if (typeof t === "number") return new Date(t > 1e12 ? t : t * 1000);
@@ -984,7 +1032,6 @@ const toDateFromAny = (t) => {
     return isNaN(d.getTime()) ? null : d;
   }
   if (t?.toDate) { try { return t.toDate(); } catch {} }
-  // Firestore Timestamp-like plain objects
   if (typeof t === "object") {
     const s = t.seconds ?? t._seconds;
     const ns = t.nanoseconds ?? t._nanoseconds;
@@ -996,21 +1043,14 @@ const toDateFromAny = (t) => {
 const formatLocalTime = (date) => {
   if (!date) return "";
   try {
-    // Device locale + locale-appropriate 12/24h
     return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(date);
   } catch {
-    // Fallback if Intl isn't available
     const h = date.getHours();
     const m = String(date.getMinutes()).padStart(2, "0");
     return `${h}:${m}`;
   }
 };
-
-
-
-
-
-
+/* ----------------------------------------------------------- */
 
 /* =================== HOME =================== */
 export default function Home() {
@@ -1019,7 +1059,6 @@ export default function Home() {
   const [userId, setUserId] = useState(getAuth().currentUser?.uid ?? null);
   const [foods, setFoods] = useState([]);
 
-  // AllNeeds/current (colors, enabled, focus)
   const [needsConfig, setNeedsConfig] = useState({
     colors: null,
     enabled: null,
@@ -1032,7 +1071,6 @@ export default function Home() {
   const { targets } = useDailyTargets();
   const { left, today } = useDailyLeft();
 
-  // Sheets busy flag
   const sheets = useSheets();
   const sheetsBusy =
     sheets.isS2Open ||
@@ -1044,7 +1082,6 @@ export default function Home() {
     sheets.isS8Open ||
     sheets.isS9Open;
 
-  /* ---------- Animation window controls ---------- */
   const [animateRings, setAnimateRings] = useState(false);
   const animateTimer = useRef(null);
   const prevValsRef = useRef(null);
@@ -1070,7 +1107,7 @@ export default function Home() {
     }
   }, [sheetsBusy]);
 
-  /* ---------- Auth + Firestore (RecentlyEaten) ---------- */
+  /* ---------- Auth + Firestore (Today/{YYYY-MM-DD}) ---------- */
   const foodsIdsRef = useRef([]);
   useEffect(() => {
     const auth = getAuth();
@@ -1093,22 +1130,25 @@ export default function Home() {
         return;
       }
 
-      const colRef = collection(db, "users", user.uid, "RecentlyEaten");
+      const dayKey = getLocalDayKey();
+      const colRef = collection(db, "users", user.uid, "Today", dayKey, "List");
       unsubFoods = onSnapshot(
         colRef,
-        (snap) => {
+        async (snap) => {
           const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
           const ids = rows.map((r) => r.id).join("|");
+
           if (ids !== foodsIdsRef.current.join("|")) {
             foodsIdsRef.current = rows.map((r) => r.id);
             setFoods(rows);
+            await recalcAndWriteDailyTotals(user.uid); // keep Daily up to date
             openAnimWindow(700);
           }
           setErr(null);
           setLoading(false);
         },
         (e) => {
-          console.warn("[RecentlyEaten] onSnapshot error:", e);
+          console.warn("[Today] onSnapshot error:", e);
           setErr(String(e?.message || e));
           setLoading(false);
         }
@@ -1150,8 +1190,33 @@ export default function Home() {
     return () => unsub && unsub();
   }, [userId]);
 
-  /* ---------- List item ---------- */
-  const onPressFood = useCallback(
+  /* ---------- Delete + open/edit actions ---------- */
+const deleteItem = useCallback(async (id) => {
+  try {
+    const uid = getAuth()?.currentUser?.uid;
+    if (!uid || !id) return;
+    const db = getFirestore();
+    const dayKey = getLocalDayKey();
+
+    // Correct path: /users/$uid/Today/$dayKey/List/$id
+    await deleteDoc(doc(db, "users", uid, "Today", dayKey, "List", id));
+
+    // Also delete from RecentlyEaten to stay consistent
+    await deleteDoc(doc(db, "users", uid, "RecentlyEaten", id));
+
+    // And from AllTimeLineScan if you mirror there
+    await deleteDoc(doc(db, "users", uid, "AllTimeLineScan", id));
+
+    await recalcAndWriteDailyTotals(uid);
+
+    Haptics.notificationAsync?.(Haptics.NotificationFeedbackType.Success);
+  } catch (e) {
+    console.warn("Delete failed:", e?.message || e);
+    Haptics.notificationAsync?.(Haptics.NotificationFeedbackType.Error);
+  }
+}, []);
+
+  const onOpenItem = useCallback(
     (item) => {
       setCurrentItemId(item.id);
       setCurrentItem(item);
@@ -1160,66 +1225,100 @@ export default function Home() {
     [present, setCurrentItem, setCurrentItemId]
   );
 
-  const renderItem = useCallback(
-    ({ item }) => (
-      <TouchableOpacity
-        activeOpacity={0.85}
-        onPress={() => onPressFood(item)}
-        disabled={sheetsBusy}
-        style={{
-          height: size(80),
-          paddingHorizontal: 20,
-          paddingVertical: 20,
-          borderRadius: 20,
-          width: "90%",
-          alignSelf: "center",
-          flexDirection: "row",
-          marginBottom: height(1),
-          opacity: sheetsBusy ? 0.6 : 1,
-          backgroundColor: "#fff",
+  /* ---------- List item with native context menu ---------- */
+ 
+const renderItem = useCallback(
+  ({ item }) => {
+    const id = item?.id ?? "";
+    if (!id) return null;
+
+    return (
+      <ContextMenu
+        title={item?.items?.[0]?.name ?? "Meal"}
+        actions={[
+          { title: "Open",  systemIcon: "eye" },
+          { title: "Edit",  systemIcon: "pencil" },
+          { title: "Delete", systemIcon: "trash", destructive: true },
+        ]}
+        onPreviewPress={() => onOpenItem(item)}      // tap on preview -> Open
+        onPress={(e) => {
+          const name = e.nativeEvent?.name;
+          if (name === "Open" || name === "Edit") onOpenItem(item);
+          if (name === "Delete") deleteItem(id);
         }}
+        previewBackgroundColor="#FFFFFF"
+        borderRadius={20}
       >
-        <View
+        {/* ONE child only; this view is both the preview and the tappable row */}
+        <Pressable
+          onPress={() => onOpenItem(item)}            // normal tap -> open sheet
           style={{
-            alignItems: "center",
-            width: size(50),
-            borderRadius: size(50) / 2,
-            justifyContent: "center",
-            height: size(50),
+            top: height(4),
+            height: size(80),
+            paddingHorizontal: 20,
+            paddingVertical: 20,
+            borderRadius: 20,
+            width: "90%",
             alignSelf: "center",
+            flexDirection: "row",
+            marginBottom: height(1),
+            backgroundColor: "#fff",
             overflow: "hidden",
           }}
         >
-          <Image
-            source={{ uri: item.image_cloud_url }}
-            style={{ height: "100%", width: "100%" }}
-            contentFit="cover"
-            transition={0}
-            cachePolicy="memory-disk"
-          />
-        </View>
+          <View
+            style={{
+              alignItems: "center",
+              width: size(50),
+              borderRadius: size(50) / 2,
+              justifyContent: "center",
+              height: size(50),
+              alignSelf: "center",
+              overflow: "hidden",
+            }}
+          >
+            <Image
+              source={{ uri: item.image_cloud_url }}
+              style={{ height: "100%", width: "100%" }}
+              contentFit="cover"
+              cachePolicy="memory-disk"
+              transition={100}
+            />
+          </View>
 
-        <View style={{ marginLeft: width(5), width: "90%" }}>
-          <Text style={{ fontSize: size(15), fontWeight: "800", width: "70%" }} numberOfLines={1}>
-            {item?.items?.[0]?.name ?? "Item"}
-          </Text>
+          <View style={{ marginLeft: width(5), width: "90%" }}>
+            <Text style={{ fontSize: size(15), fontWeight: "800", width: "70%" }} numberOfLines={1}>
+              {item?.items?.[0]?.name ?? "Item"}
+            </Text>
 
-          <Text style={{ fontSize: 14, fontWeight: "bold", position: "absolute", right: width(5) }}>
-            +{Math.round(Number(item?.items?.[0]?.calories_kcal || 0))} cal
-          </Text>
+            <Text style={{ fontSize: 14, fontWeight: "bold", position: "absolute", right: width(5) }}>
+              +{Math.round(Number(item?.items?.[0]?.calories_kcal || 0))} cal
+            </Text>
 
-        <Text style={{ color: "#BBC1CB", marginTop: height(0.5) }}>
-          {formatLocalTime(
-            toDateFromAny(
-              item?.created_at ?? item?.timestamp ?? item?.createdAt ?? item?.time ?? item?.date ?? item?.ts
-            )
-          )}
-        </Text>
-        </View>
-      </TouchableOpacity>
-    ),
-    [onPressFood, sheetsBusy]
-  );
+            <Text style={{ color: "#BBC1CB", marginTop: height(0.5) }}>
+              {formatLocalTime(
+                toDateFromAny(
+                  item?.created_at ??
+                  item?.timestamp ??
+                  item?.createdAt ??
+                  item?.time ??
+                  item?.date ??
+                  item?.ts
+                )
+              )}
+            </Text>
+          </View>
+        </Pressable>
+      </ContextMenu>
+    );
+  },
+  [deleteItem, onOpenItem]
+);
+
+
+
+
+
 
   const keyExtractor = useCallback((item, i) => item?.id ?? String(i), []);
 
@@ -1271,7 +1370,6 @@ export default function Home() {
     };
   }, [targets, today, coffeeTarget, cigarettesTarget]);
 
-  // Open animation window when vals change (but not while sleeping)
   useEffect(() => {
     if (sheetsBusy) return;
     if (!prevValsRef.current) {
@@ -1302,7 +1400,6 @@ export default function Home() {
     };
   }, [targets, coffeeTarget, cigarettesTarget]);
 
-  /* ===== Merge Firestore colors ===== */
   const ringColors = useMemo(() => {
     const c = needsConfig.colors || {};
     return {
@@ -1323,8 +1420,7 @@ export default function Home() {
 
   return (
     <View style={{ backgroundColor: "#fff", height: "100%", width: "100%" }}>
-      <Animated.FlatList
-        /* ✅ Sort by time (most recent first) so grouping makes sense */
+      <Animated.FlatList 
         data={useMemo(() => {
           const getMs = (it) => {
             const t =
@@ -1357,110 +1453,7 @@ export default function Home() {
           return arr;
         }, [foods])}
         keyExtractor={keyExtractor}
-        /* ✅ Inject relative-date section titles without changing your renderItem */
-        renderItem={(props) => {
-          const { item, index } = props;
-
-          // Helpers duplicated here to avoid changing anything else
-          const getMs = (it) => {
-            const t =
-              it?.timestamp ??
-              it?.created_at ??
-              it?.createdAt ??
-              it?.time ??
-              it?.date ??
-              it?.ts;
-            if (!t) return 0;
-            if (typeof t === "number") return t > 1e12 ? t : t * 1000;
-            if (typeof t === "string") {
-              const d = new Date(t);
-              return isNaN(d.getTime()) ? 0 : d.getTime();
-            }
-            if (t?.toDate) {
-              try {
-                return t.toDate().getTime();
-              } catch {}
-            }
-            if (typeof t === "object" && (t.seconds || t.nanoseconds === 0)) {
-              const s = Number(t.seconds || 0) * 1000;
-              const ns = Number(t.nanoseconds || 0) / 1e6;
-              return s + ns;
-            }
-            return 0;
-          };
-
-          const startOfWeekMonday = (d) => {
-            const dt = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-            const day = (dt.getDay() + 6) % 7; // Monday=0
-            dt.setDate(dt.getDate() - day);
-            dt.setHours(0, 0, 0, 0);
-            return dt;
-          };
-
-          const labelFor = (ms) => {
-            if (!ms) return "Earlier";
-            const now = new Date();
-            const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-            const itemDate = new Date(ms);
-            const itemStart = new Date(itemDate.getFullYear(), itemDate.getMonth(), itemDate.getDate());
-            const diffDays = Math.floor((todayStart - itemStart) / 86400000);
-
-            if (diffDays === 0) return "Today";
-            if (diffDays === 1) return "Yesterday";
-
-            const thisWeekStart = startOfWeekMonday(now);
-            const lastWeekStart = new Date(thisWeekStart);
-            lastWeekStart.setDate(thisWeekStart.getDate() - 7);
-            const nextWeekStart = new Date(thisWeekStart);
-            nextWeekStart.setDate(thisWeekStart.getDate() + 7);
-
-            if (itemDate >= thisWeekStart && itemDate < nextWeekStart) return "This week";
-            if (itemDate >= lastWeekStart && itemDate < thisWeekStart) return "Last week";
-
-            const ymNow = now.getFullYear() * 12 + now.getMonth();
-            const ymItem = itemDate.getFullYear() * 12 + itemDate.getMonth();
-            const mDiff = Math.max(0, ymNow - ymItem);
-
-            if (mDiff === 0) return "Earlier this month";
-            if (mDiff === 1) return "1 month ago";
-            return `${mDiff} months ago`;
-          };
-
-          // Compare to previous item (on the same sorted order)
-          const sorted = Array.isArray(foods)
-            ? [...foods].sort((a, b) => getMs(b) - getMs(a))
-            : [];
-          const prev = index > 0 ? sorted[index - 1] : null;
-          const label = labelFor(getMs(item));
-          const prevLabel = prev ? labelFor(getMs(prev)) : null;
-
-          // 👉 Only show a header when the label changes.
-          // Also: if the first group is "Today", do NOT render the "Today" header here
-          // (the static "Today" text in the header already covers it).
-          // If there are no Today items, the first header will be "Yesterday" / etc.
-       const shouldShowHeader =
-  index === 0 ? true : label !== prevLabel;
-
-
-          return (
-            <>
-              {shouldShowHeader && (
-                <Text
-                  style={{
-                    marginLeft: width(5),
-                    fontSize: size(14),
-                    marginTop: height(5),
-                    marginBottom: height(3),
-                    fontWeight: "800",
-                  }}
-                >
-                  {label}
-                </Text>
-              )}
-              {renderItem(props)}
-            </>
-          );
-        }}
+        renderItem={renderItem}
         ListHeaderComponent={
           <HeaderView
             userId={userId}
@@ -1473,7 +1466,7 @@ export default function Home() {
           />
         }
         ListHeaderComponentStyle={{ backgroundColor: "#fff" }}
-        contentContainerStyle={{ paddingBottom: height(18) }}
+        contentContainerStyle={{ paddingBottom: height(24) }}
         showsVerticalScrollIndicator={false}
         removeClippedSubviews={false}
         windowSize={5}
@@ -1481,15 +1474,14 @@ export default function Home() {
         initialNumToRender={4}
         updateCellsBatchingPeriod={80}
         scrollEnabled={!sheetsBusy}
-        // 🔑 force re-render when enabled/colors/focus change
+        getItemLayout={(_, index) => {
+          const row = size(80) + height(1);
+          return { length: row, offset: row * index, index };
+        }}
         extraData={{
           enabled: needsConfig.enabled,
           colors: needsConfig.colors,
           focus: needsConfig.focus,
-        }}
-        getItemLayout={(_, index) => {
-          const row = size(80) + height(1);
-          return { length: row, offset: row * index, index };
         }}
       />
     </View>

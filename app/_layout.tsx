@@ -1,6 +1,6 @@
 // app/_layout.tsx
 import { Stack } from "expo-router";
-import React, { useEffect, useState } from "react";
+import React, { useEffect } from "react";
 import { View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 
@@ -12,37 +12,39 @@ import DailyLeftProvider from "./Context/DailyLeftContext";
 import DailyTargetsProvider from "./Context/DailyPlanProvider";
 import { EditNutritionProvider } from "./Context/EditNutritionContext";
 import { OnboardingProvider } from "./Context/OnboardingContext";
+import PaywallView from "./Context/PaywallView";
 import { RevenueCatProvider, useRevenueCat } from "./Context/RevenueCatContext";
 import { ScanResultsProvider } from "./Context/ScanResultsContext";
 import { SheetsProvider } from "./Context/SheetsContext";
 import { StepsProvider } from "./Context/StepsContext";
 import { StreakProvider } from "./Context/StreakContext";
 
-
-
-
-
-
 // Optional: make sure we start at app/index
 export const unstable_settings = {
   initialRouteName: "index",
 };
 
-// Inner shell so we can use the RevenueCat hook inside the provider
+// ---- Local type to fix TS "never" for your ClickedOnBtn setter ----
+type RCBits = {
+  isPremium: boolean;
+  loading: boolean;
+  ClickedOnBtn: boolean;
+  setClickedOnBtn: React.Dispatch<React.SetStateAction<boolean>>;
+};
+// -------------------------------------------------------------------
+
+// Inner shell so we can use RevenueCat inside the provider tree
 function AppShell() {
-  const { isPremium, loading } = useRevenueCat();
-  const [showPaywall, setShowPaywall] = useState(false);
+  // Cast the hook result so TS knows these exist & are callable
+  const { isPremium, loading, ClickedOnBtn, setClickedOnBtn } =
+    (useRevenueCat() as unknown as RCBits);
 
-  
-  // Decide when to show/hide the paywall
+  // Auto-close the paywall if the user becomes premium while it’s open
   useEffect(() => {
-    if (!loading) {
-      // show paywall if NOT premium
-      setShowPaywall(!isPremium);
+    if (isPremium && ClickedOnBtn) {
+      setClickedOnBtn(false);
     }
-  }, [loading, isPremium]);
-
-  
+  }, [isPremium, ClickedOnBtn, setClickedOnBtn]);
 
   return (
     <View style={{ flex: 1 }}>
@@ -53,10 +55,9 @@ function AppShell() {
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       </Stack>
 
-      {/* Paywall overlay (only when needed) */}
-      {/*showPaywall && !loading && !isPremium && (
+      {/* Paywall overlay: owned by Layout, triggered via ClickedOnBtn */}
+      {ClickedOnBtn && !loading && !isPremium && (
         <View
-          // full-screen overlay above everything
           style={{
             position: "absolute",
             top: 0,
@@ -67,9 +68,9 @@ function AppShell() {
           }}
           pointerEvents="auto"
         >
-          <PaywallView onClose={() => setShowPaywall(false)} />
+          <PaywallView onClose={() => setClickedOnBtn(false)} />
         </View>
-      )*/}
+      )}
     </View>
   );
 }
@@ -79,30 +80,30 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <RevenueCatProvider>
         <EditNutritionProvider>
-        <DailyLeftProvider>
-          <DailyTargetsProvider>
-            <StepsProvider>
-              <OnboardingProvider>
-                <CurrentScannedItemIdProvider>
-                  <StreakProvider>
-                    <AddToInventoryProvider>
-                      <CountryPhoneSheetProvider>
-                        <CameraActiveProvider>
-                          <SheetsProvider>
-                            <ScanResultsProvider>
-                              <AppShell />
-                            </ScanResultsProvider>
-                          </SheetsProvider>
-                        </CameraActiveProvider>
-                      </CountryPhoneSheetProvider>
-                    </AddToInventoryProvider>
-                  </StreakProvider>
-                </CurrentScannedItemIdProvider>
-              </OnboardingProvider>
-            </StepsProvider>
-          </DailyTargetsProvider>
-        </DailyLeftProvider>
-         </EditNutritionProvider>
+          <DailyLeftProvider>
+            <DailyTargetsProvider>
+              <StepsProvider>
+                <OnboardingProvider>
+                  <CurrentScannedItemIdProvider>
+                    <StreakProvider>
+                      <AddToInventoryProvider>
+                        <CountryPhoneSheetProvider>
+                          <CameraActiveProvider>
+                            <SheetsProvider>
+                              <ScanResultsProvider>
+                                <AppShell />
+                              </ScanResultsProvider>
+                            </SheetsProvider>
+                          </CameraActiveProvider>
+                        </CountryPhoneSheetProvider>
+                      </AddToInventoryProvider>
+                    </StreakProvider>
+                  </CurrentScannedItemIdProvider>
+                </OnboardingProvider>
+              </StepsProvider>
+            </DailyTargetsProvider>
+          </DailyLeftProvider>
+        </EditNutritionProvider>
       </RevenueCatProvider>
     </GestureHandlerRootView>
   );

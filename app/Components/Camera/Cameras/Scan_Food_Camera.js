@@ -29,6 +29,7 @@ import {
   getDoc,
   getFirestore,
   serverTimestamp,
+  setDoc,
 } from "@react-native-firebase/firestore";
 import storage from "@react-native-firebase/storage";
 
@@ -468,7 +469,7 @@ Return the SAME JSON shape as the OCR tool (estimates allowed). Prefer realistic
 `.trim();
 
   const body = {
-    model: "gpt-4o-mini",
+    model: "gpt-5",
     response_format: { type: "json_object" },
     temperature: 0.2,
     messages: [
@@ -1062,10 +1063,13 @@ export default forwardRef(function Scan_Food_Camera(
           };
 
           // Save 3 places
+         let createdDocId;
+
           try {
             const db = getFirestore();
             const colRef = collection(db, "users", userId, "RecentlyEaten");
             const docRef = await addDoc(colRef, payload);
+            createdDocId = docRef.id;
             setCurrentItemId(docRef.id);
             setCurrentItem(payload);
             addLog(`Saved scan to Firestore [RecentlyEaten/${docRef.id}]`);
@@ -1076,15 +1080,8 @@ export default forwardRef(function Scan_Food_Camera(
           try {
             const db = getFirestore();
             const dateId = localDateId();
-            const colRef = collection(
-              db,
-              "users",
-              userId,
-              "Today",
-              dateId,
-              "List"
-            );
-            await addDoc(colRef, payload);
+            const todayRef = doc(db, "users", userId, "Today", dateId, "List", createdDocId);
+            await setDoc(todayRef, payload);
             addLog(`Saved scan to Firestore [Today/${dateId}/List]`);
           } catch (err) {
             addLog(`[ERR] Firestore save (Today): ${err?.message || err}`);
@@ -1092,12 +1089,13 @@ export default forwardRef(function Scan_Food_Camera(
 
           try {
             const db = getFirestore();
-            const colRef = collection(db, "users", userId, "AllTimeLineScan");
-            await addDoc(colRef, payload);
+            const allTimeRef = doc(db, "users", userId, "AllTimeLineScan", createdDocId);
+            await setDoc(allTimeRef, payload);
             addLog(`Saved scan to Firestore [AllTimeLineScan]`);
           } catch (err) {
             addLog(`[ERR] Firestore save (AllTimeLineScan): ${err?.message || err}`);
           }
+
 
           onScanResult?.(analyzed);
           addLog("Analysis done");

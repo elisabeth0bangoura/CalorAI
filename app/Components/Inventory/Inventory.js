@@ -1,4 +1,5 @@
 // ./app/Inventory/Inventory.js
+import { useRevenueCat } from "@/app/Context/RevenueCatContext";
 import { getAuth } from "@react-native-firebase/auth";
 import firestore, {
   collection,
@@ -72,8 +73,10 @@ const changeQty = async (it, delta) => {
 
 export default function Inventory() {
   const { register, present, dismiss, dismissAll } = useSheets();
+    const { isPremium, loading, ClickedOnBtn, setClickedOnBtn,  } = useRevenueCat();
+  
   const [items, setItems] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loadingHere, setLoading] = useState(true);
   const [exitingIds, setExitingIds] = useState([]);
 
   // local peak max for each item (prevents shrinking ring on increment)
@@ -81,7 +84,7 @@ export default function Inventory() {
 
   const { ramenRecipes } = useOpenAIRecipes({
     items,
-    enabled: !loading,
+    enabled: !loadingHere,
     pageSize: 6,
     model: "o4-mini",
   });
@@ -158,7 +161,7 @@ export default function Inventory() {
     return out;
   }, [items]);
 
-  if (loading) {
+  if (loadingHere) {
     return (
       <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
         <ActivityIndicator size="large" color="#000" />
@@ -168,7 +171,9 @@ export default function Inventory() {
 
   return (
     <View style={{ backgroundColor: "#fff", height: "100%", width: "100%" }}>
-      <ScrollView
+      <ScrollView contentContainerStyle={{
+        paddingBottom: height(25)
+      }}
         style={{
           height: "100%",
           paddingTop: height(16),
@@ -187,7 +192,9 @@ export default function Inventory() {
             Your Fridge
           </Text>
 
-          <TouchableOpacity
+          <TouchableOpacity onPress={() => {
+            setClickedOnBtn(true)
+          }}
             style={{
               position: "absolute",
               right: width(5),
@@ -283,8 +290,8 @@ export default function Inventory() {
                     <Image
                       source={{ uri: item.image_cloud_url }}
                       style={{ height: "100%", width: "100%" }}
-                      contentFit="cover"
-                      cachePolicy="disk"
+                      cachePolicy="memory-disk"       // stronger than "disk"
+                      transition={100}                // smooth in
                     />
                   </View>
 
@@ -415,7 +422,7 @@ export default function Inventory() {
           <Text
             style={{
               fontSize: size(25),
-              marginBottom: height(4),
+              marginBottom: height(2),
               marginLeft: width(5),
               fontWeight: "700",
             }}

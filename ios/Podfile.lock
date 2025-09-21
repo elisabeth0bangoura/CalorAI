@@ -3136,6 +3136,8 @@ PODS:
     - ReactCommon/turbomodule/core
   - react-native-bubble-select (0.6.0):
     - React
+  - react-native-context-menu-view (1.19.0):
+    - React
   - react-native-mmkv (3.3.0):
     - DoubleConversion
     - glog
@@ -4195,6 +4197,7 @@ DEPENDENCIES:
   - React-Mapbuffer (from `../node_modules/react-native/ReactCommon`)
   - React-microtasksnativemodule (from `../node_modules/react-native/ReactCommon/react/nativemodule/microtasks`)
   - react-native-bubble-select (from `../node_modules/react-native-bubble-select`)
+  - react-native-context-menu-view (from `../node_modules/react-native-context-menu-view`)
   - react-native-mmkv (from `../node_modules/react-native-mmkv`)
   - react-native-pager-view (from `../node_modules/react-native-pager-view`)
   - react-native-safe-area-context (from `../node_modules/react-native-safe-area-context`)
@@ -4446,6 +4449,8 @@ EXTERNAL SOURCES:
     :path: "../node_modules/react-native/ReactCommon/react/nativemodule/microtasks"
   react-native-bubble-select:
     :path: "../node_modules/react-native-bubble-select"
+  react-native-context-menu-view:
+    :path: "../node_modules/react-native-context-menu-view"
   react-native-mmkv:
     :path: "../node_modules/react-native-mmkv"
   react-native-pager-view:
@@ -4662,6 +4667,7 @@ SPEC CHECKSUMS:
   React-Mapbuffer: a83853bd80bb31a4451e64af91a86c02f7df4f80
   React-microtasksnativemodule: 964a2c1213bb39fa5cc8d5ee4f55846d67747f32
   react-native-bubble-select: 93f9b679389d662caafd8e1d94e2673c76ae5583
+  react-native-context-menu-view: f20df4bf07145c6d14ef631c8b8663ccdac9fb7c
   react-native-mmkv: f3eccec36dea25bf57cb3b789db5ac9113d6391a
   react-native-pager-view: e0a6e9be6bf1d8ee1fdbaeab5c6a118ac13cefee
   react-native-safe-area-context: 6cec90ce53951d3b52dc73e873323a4a7662fc0c

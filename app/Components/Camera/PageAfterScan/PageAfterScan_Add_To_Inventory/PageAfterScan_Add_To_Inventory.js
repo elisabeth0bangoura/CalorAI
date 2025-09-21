@@ -763,7 +763,7 @@ function InnerPageAfterScan() {
 
             {/* Actions */}
             <View style={{ paddingHorizontal: width(5), marginTop: height(3), marginBottom: height(2) }}>
-              <TouchableOpacity
+             {/* <TouchableOpacity
                 style={styles.ctaPrimary}
                 onPress={() => present("s6")}
               >
@@ -771,7 +771,7 @@ function InnerPageAfterScan() {
                 <Text style={{ color: "#fff", fontWeight: "800", fontSize: size(16) }}>
                   Edit item
                 </Text>
-              </TouchableOpacity>
+              </TouchableOpacity>*/}
             </View>
           </View>
         </View>

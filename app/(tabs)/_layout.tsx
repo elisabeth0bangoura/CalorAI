@@ -120,7 +120,6 @@ export default function Layout(): React.ReactElement {
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: "#fff" }}>
       
-
       <CameraActiveProvider>
         <SheetsProvider>
           <ScanResultsProvider>

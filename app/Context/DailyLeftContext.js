@@ -1,14 +1,14 @@
-// DailyLeftContext.js — plain JS, RN Firebase v22 modular
+// DailyLeftContext.js — RN Firebase v22 modular + optimistic deltas
 import { getAuth } from '@react-native-firebase/auth';
 import {
-    collection,
-    getDocs,
-    getFirestore,
-    onSnapshot,
-    orderBy,
-    query,
+  collection,
+  getDocs,
+  getFirestore,
+  onSnapshot,
+  orderBy,
+  query,
 } from '@react-native-firebase/firestore';
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
 /* ---- local date key: YYYY-MM-DD ---- */
 function todayKey() {
@@ -25,8 +25,10 @@ const DailyLeftContext = createContext(null);
 export const useDailyLeft = () => useContext(DailyLeftContext);
 
 export default function DailyLeftProvider({ children }) {
-  const [entries, setEntries] = useState([]);            // raw docs from .../List
-  const [today, setToday] = useState({                   // <-- your requested names
+  const [entries, setEntries] = useState([]); // raw docs from .../List
+
+  // base aggregated totals from Firestore (no optimistic changes)
+  const [baseToday, setBaseToday] = useState({
     caloriesToday: 0,
     carbsToday: 0,
     proteinToday: 0,
@@ -35,6 +37,27 @@ export default function DailyLeftProvider({ children }) {
     fiberToday: 0,
     sodiumToday: 0,
   });
+
+  // live, optimistic deltas keyed by an id (e.g. delete-<meal>-<idx>-<ts>)
+  const deltasRef = useRef(new Map());
+
+  // exposed combined "today" = baseToday + sum(deltas)
+  const today = useMemo(() => {
+    const sum = { ...baseToday };
+    for (const delta of deltasRef.current.values()) {
+      sum.caloriesToday += n(delta.caloriesToday);
+      sum.carbsToday    += n(delta.carbsToday);
+      sum.proteinToday  += n(delta.proteinToday);
+      sum.fatToday      += n(delta.fatToday);
+      sum.sugarToday    += n(delta.sugarToday);
+      sum.fiberToday    += n(delta.fiberToday);
+      sum.sodiumToday   += n(delta.sodiumToday);
+    }
+    // ensure no NaNs
+    Object.keys(sum).forEach((k) => (sum[k] = n(sum[k])));
+    return sum;
+  }, [baseToday]);
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -53,7 +76,7 @@ export default function DailyLeftProvider({ children }) {
 
         // users/{uid}/Today/{dateKey}/List
         const listRef = collection(db, 'users', uid, 'Today', dateKey, 'List');
-        const q = query(listRef, orderBy('created_at', 'desc')); // remove if some docs lack created_at
+        const q = query(listRef, orderBy('created_at', 'desc')); // remove orderBy if some docs lack created_at
 
         unsub = onSnapshot(
           q,
@@ -106,7 +129,7 @@ export default function DailyLeftProvider({ children }) {
               sodiumToday: 0,
             });
 
-            setToday(totals);
+            setBaseToday(totals);
             setError(null);
             setLoading(false);
           },
@@ -136,7 +159,6 @@ export default function DailyLeftProvider({ children }) {
       const snap = await getDocs(listRef);
       const arr = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       setEntries(arr);
-      // recompute the same way as above (DRY left out for brevity)
       const totals = arr.reduce((acc, row) => {
         const hasTop =
           row.calories_kcal_total != null ||
@@ -177,10 +199,34 @@ export default function DailyLeftProvider({ children }) {
         sodiumToday: 0,
       });
 
-      setToday(totals);
+      setBaseToday(totals);
       setError(null);
     } catch (e) {
       setError(String(e?.message || e));
+    }
+  };
+
+  /* -------- NEW: optimistic delta API used by Scan page -------- */
+  const applyDelta = (key, delta) => {
+    if (!key) return;
+    deltasRef.current.set(key, {
+      caloriesToday: n(delta?.caloriesToday),
+      carbsToday:    n(delta?.carbsToday),
+      proteinToday:  n(delta?.proteinToday),
+      fatToday:      n(delta?.fatToday),
+      sugarToday:    n(delta?.sugarToday),
+      fiberToday:    n(delta?.fiberToday),
+      sodiumToday:   n(delta?.sodiumToday),
+    });
+    // force a re-render by touching state (use baseToday no-op set)
+    setBaseToday((t) => ({ ...t }));
+  };
+
+  const clearDelta = (key) => {
+    if (!key) return;
+    if (deltasRef.current.has(key)) {
+      deltasRef.current.delete(key);
+      setBaseToday((t) => ({ ...t }));
     }
   };
 
@@ -201,6 +247,9 @@ export default function DailyLeftProvider({ children }) {
         error,
         dateKey,
         refresh,
+        // NEW:
+        applyDelta,
+        clearDelta,
       }}
     >
       {children}

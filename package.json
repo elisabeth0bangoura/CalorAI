@@ -69,6 +69,7 @@
     "react-native-bubble-select": "^0.6.0",
     "react-native-circular-progress-indicator": "^4.4.2",
     "react-native-confetti": "^0.1.0",
+    "react-native-context-menu-view": "^1.19.0",
     "react-native-easing-gradient": "^1.1.1",
     "react-native-gesture-handler": "~2.24.0",
     "react-native-google-places-autocomplete": "^2.5.7",
