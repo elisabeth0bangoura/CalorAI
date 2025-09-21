@@ -1,10 +1,10 @@
 // app/Context/AddToInventoryContext.js
 import {
-    createContext,
-    useCallback,
-    useContext,
-    useMemo,
-    useState,
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  useState,
 } from "react";
 
 /**
@@ -98,6 +98,9 @@ export function AddToInventoryProvider({ children }) {
   const [netWeightUnit, setNetWeightUnit]   = useState("");   // "g" | "kg" | "ml" | "l"
   const [netWeightG, setNetWeightG]   = useState(null);       // normalized to grams/ml≈g
   const [netWeightText, setNetWeightText] = useState("");
+  const [CurrentReceipeFromInventory, setCurrentReceipeFromInventory] = useState();
+
+
 
   // Optional “servings” semantics if you want them in UI
   const [servingsPerPack, setServingsPerPack] = useState(null); // model/user estimate
@@ -233,7 +236,7 @@ export function AddToInventoryProvider({ children }) {
       lastSavedDocId, setLastSavedDocId,
       saving, setSaving,
       error, setError,
-
+      CurrentReceipeFromInventory, setCurrentReceipeFromInventory,
       // helpers
       applyFromModel,
       applyFromFirestore,
@@ -248,6 +251,7 @@ export function AddToInventoryProvider({ children }) {
       bestBeforeISO, bestBeforeText,
       lastSavedDocId, saving, error,
       applyFromModel, applyFromFirestore, augmentInventoryPayload, reset,
+      CurrentReceipeFromInventory, setCurrentReceipeFromInventory
     ]
   );
 

@@ -285,12 +285,11 @@ export default function Inventory() {
                       borderRadius: 10,
                       overflow: "hidden",
                       backgroundColor: "#ccc",
-                    }}
-                  >
+                    }}>
                     <Image
                       source={{ uri: item.image_cloud_url }}
                       style={{ height: "100%", width: "100%" }}
-                      cachePolicy="memory-disk"       // stronger than "disk"
+                     // cachePolicy="memory-disk"       // stronger than "disk"
                       transition={100}                // smooth in
                     />
                   </View>

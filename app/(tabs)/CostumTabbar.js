@@ -1,6 +1,6 @@
 // app/Sheets/SheetsHost.js
 import { TrueSheet } from "@lodev09/react-native-true-sheet";
-import { Check, ChevronLeft } from "lucide-react-native";
+import { ChevronLeft } from "lucide-react-native";
 import React, { memo, useEffect, useMemo, useState } from "react";
 import { Button as RNButton, Text, TouchableOpacity, View } from "react-native";
 import { height, size, width } from "react-native-responsive-sizes";
@@ -14,6 +14,7 @@ import PageAfterScanFood from "../Components/Camera/PageAfterScan/PageAfterScan_
 import PageAfterScan_FoodLabel from "../Components/Camera/PageAfterScan/PageAfterScan_Scan_FoodLabel/PageAfterScan_FoodLabel";
 import EditMyWeight from "../Components/EditMyWeight/EditMyWeight";
 import Home_Add_Widget from "../Components/Home/Home_Add_Widget";
+import Receipes_From_Inventory from "../Components/Inventory/Receipes_From_Inventory";
 import EditHabit_And_Nutrition_Goals from "../Components/Profile/EditHabit_And_Nutrition_Goals/EditHabit_And_Nutrition_Goals";
 import Generate_Based_On_Habits_AndHealth from "../Components/Profile/EditHabit_And_Nutrition_Goals/Generate_Based_On_Habits_AndHealth/Generate_Based_On_Habits_AndHealth";
 import Habits_Weight_History from "../Components/Profile/Habits_Weight_History/Habits_Weight_History";
@@ -32,7 +33,6 @@ import TargetWeight from "../Components/Profile/Profile/TargetWeight";
 import ScanPageHome from "../Components/ScanPageHome/ScanPageHome";
 import { useCameraActive } from "../Context/CameraActiveContext";
 import { useSheets } from "../Context/SheetsContext";
-
 
 
 
@@ -83,6 +83,7 @@ export default function SheetsHost() {
      isEmail_Support, setIsEmail_Support,
      isDelete_Account, setIsDelete_Account,
    isLogIn, setIsLogIn,
+   isReceipes_From_Inventory, setIssetIsReceipes_From_Inventory,
    isHome_Add_Widget, setIsHome_Add_Widget
   } = useSheets();
 
@@ -116,10 +117,11 @@ export default function SheetsHost() {
   useEffect(() => { console.log("[SheetsHost] Delete_Account open ->", isDelete_Account); }, [isDelete_Account]);
   useEffect(() => { console.log("[SheetsHost] LogIn open ->", isLogIn); }, [isLogIn]);
   useEffect(() => { console.log("[SheetsHost] Home_Add_Widget open ->", isHome_Add_Widget); }, [isHome_Add_Widget]);
+  useEffect(() => { console.log("[SheetsHost] Receipes_From_Inventory open ->", isReceipes_From_Inventory); }, [isReceipes_From_Inventory]);
 
 
 
-  
+
 
 
   
@@ -268,26 +270,7 @@ export default function SheetsHost() {
                 <ChevronLeft size={25} />
               </TouchableOpacity>
 
-              <TouchableOpacity
-                activeOpacity={0.8}
-                onPress={() => dismiss("s7")}
-                style={{
-                  height: size(60),
-                  paddingHorizontal: 25,
-                  right: width(5),
-                  position: "absolute",
-                  flexDirection: "row",
-                  justifyContent: "center",
-                  alignItems: "center",
-                  borderRadius: 15,
-                  backgroundColor: "#151515",
-                }}
-              >
-                <Text style={{ color: "#fff", fontSize: size(17), marginRight: width(3), fontWeight: "bold" }}>
-                  Save
-                </Text>
-                <Check size={18} color={"#fff"} />
-              </TouchableOpacity>
+            
             </View>
           </View>
         ) : (
@@ -634,8 +617,22 @@ export default function SheetsHost() {
 
 
 
+        <TrueSheet
+        ref={register("Receipes_From_Inventory")}
+        sizes={["large"]}
+        cornerRadius={24}
+        enablePanDownToClose
+        backgroundColor="#fff"
+        onChange={(index) => setIssetIsReceipes_From_Inventory(typeof index === "number" && index >= 0)}
+        onDismiss={() => setIssetIsReceipes_From_Inventory(false)}
+      >
+       <Receipes_From_Inventory />
+      </TrueSheet>
 
 
+
+
+  
 
 
 

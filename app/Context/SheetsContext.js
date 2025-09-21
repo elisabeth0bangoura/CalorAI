@@ -41,9 +41,7 @@ export function SheetsProvider({ children }) {
  const [isDelete_Account, setIsDelete_Account] = useState(false)
  const [isLogIn, setIsLogIn] = useState(false)
  const [isHome_Add_Widget, setIsHome_Add_Widget] = useState(false)
-
-  
-
+ const [isReceipes_From_Inventory, setIssetIsReceipes_From_Inventory] = useState(false)
 
           
 
@@ -81,7 +79,7 @@ export function SheetsProvider({ children }) {
       case "Email_Support": return setIsDelete_Account(open);
       case "LogIn": return setIsLogIn(open);
       case "Home_Add_Widget": return setIsHome_Add_Widget(open);
-
+      case "Receipes_From_Inventory": return setIssetIsReceipes_From_Inventory(open);
 
    
       default: return;
@@ -137,7 +135,8 @@ export function SheetsProvider({ children }) {
       isEmail_Support, setIsEmail_Support,
        isDelete_Account, setIsDelete_Account,
      isLogIn, setIsLogIn,
-      isHome_Add_Widget, setIsHome_Add_Widget
+      isHome_Add_Widget, setIsHome_Add_Widget,
+    isReceipes_From_Inventory, setIssetIsReceipes_From_Inventory,
     }),
     [
       isS1Open, 
@@ -175,7 +174,8 @@ export function SheetsProvider({ children }) {
       isEmail_Support, setIsEmail_Support,
      isDelete_Account, setIsDelete_Account,
      isLogIn, setIsLogIn,
-      isHome_Add_Widget, setIsHome_Add_Widget
+      isHome_Add_Widget, setIsHome_Add_Widget,
+    isReceipes_From_Inventory, setIssetIsReceipes_From_Inventory
     ]
   );
 

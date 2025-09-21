@@ -1,4 +1,6 @@
 // ./app/Inventory/RecipesFromInventory.js
+import { useAddToInventory } from "@/app/Context/AddToInventoryContext";
+import { useSheets } from "@/app/Context/SheetsContext";
 import { getAuth } from "@react-native-firebase/auth";
 import {
   collection,
@@ -14,6 +16,7 @@ import {
   FlatList,
   Platform,
   Text,
+  TouchableOpacity,
   View
 } from "react-native";
 import { height, size, width } from "react-native-responsive-sizes";
@@ -84,6 +87,96 @@ const titlesFromInventory = (docs, max = 60) => {
   return out.slice(0, max);
 };
 
+/* -------------------- ADD: step helpers (no other changes) -------------------- */
+
+// Heuristics to allocate time across text steps
+const KEYWORD_WEIGHTS = [
+  { re: /bake|roast|oven/i, w: 4 },
+  { re: /simmer|braise|reduce/i, w: 3.5 },
+  { re: /boil|cook noodles|al dente/i, w: 3 },
+  { re: /roux|béchamel|whisk|stir|mix|fold|melt|chop|slice/i, w: 2 },
+  { re: /preheat|drain|season|transfer|top|serve|heat oil/i, w: 1.3 },
+];
+
+function allocateDurations(steps = [], total = 0) {
+  const n = Array.isArray(steps) ? steps.length : 0;
+  if (!n) return [];
+  if (!Number.isFinite(total) || total <= 0) total = n * 5; // fallback
+
+  const weights = steps.map((s) => {
+    let maxW = 1;
+    for (const { re, w } of KEYWORD_WEIGHTS) if (re.test(s)) maxW = Math.max(maxW, w);
+    return maxW;
+  });
+
+  const sumW = weights.reduce((a, b) => a + b, 0) || n;
+  const raw = weights.map((w) => (w / sumW) * total);
+
+  // round to ints; ensure >=1; fix rounding drift to match total
+  let mins = raw.map((x) => Math.max(1, Math.round(x)));
+  let diff = total - mins.reduce((a, b) => a + b, 0);
+  const order = [...mins.keys()].sort((a, b) => weights[b] - weights[a]);
+  for (const i of order) {
+    if (diff === 0) break;
+    if (diff > 0) { mins[i] += 1; diff -= 1; }
+    else if (mins[i] > 1) { mins[i] -= 1; diff += 1; }
+  }
+  return mins;
+}
+
+function buildStepsObjects(steps = [], durations = []) {
+  const out = [];
+  const n = steps.length;
+  for (let i = 0; i < n; i++) {
+    const timer = Number.isFinite(durations[i]) ? durations[i] : 5;
+    out.push({ timer, Step: String(steps[i] || "").trim() });
+  }
+  return out;
+}
+
+/* -------------------- ADD: OpenAI image helper -------------------- */
+async function generateRecipeImageUrl({ apiKey, title }) {
+  try {
+    const prompt = `
+A delicious and appetizing food photograph of homemade "${title}".
+The entire dish is visible in the frame, in a rustic ceramic dish on a wooden table.
+Shot from above at a slight angle like a food blog photo.
+The food looks fresh and irresistible with rich colors and realistic textures.
+Focus is sharp on the whole dish; background softly blurred.
+Natural daylight, warm tones, authentic homemade food photography.
+No steam. No CGI, no 3D render, no illustration.
+No people, no hands, no text, no labels, no extra props.
+`.trim();
+
+    const res = await fetch("https://api.openai.com/v1/images/generations", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: "dall-e-3",
+        prompt,
+        size: "1024x1024",
+        n: 1,
+        style: "natural",
+        response_format: "url",
+      }),
+    });
+
+    if (!res.ok) {
+      const msg = await res.text().catch(() => "");
+      console.warn("Image gen failed:", res.status, msg);
+      return null;
+    }
+    const data = await res.json();
+    return data?.data?.[0]?.url || null;
+  } catch (e) {
+    console.warn("Image gen error:", e?.message || e);
+    return null;
+  }
+}
+
 /** Ask GPT for recipes with time + difficulty */
 const fetchRecipesFromGPT = async ({
   productTitles,
@@ -91,7 +184,7 @@ const fetchRecipesFromGPT = async ({
   count = 6,
   model = "gpt-5",
 }) => {
-  const systemPrompt = `
+const systemPrompt = `
 You are a helpful multilingual recipe creator.
 
 Input is a list of real-world PRODUCT or FOOD TITLES (brands / many languages).
@@ -108,9 +201,35 @@ Rules:
 - Easy recipes: quick (<40 min), simple steps.
 - Medium recipes: longer or with more steps.
 
+ADDITIONAL REQUIREMENTS (do not remove anything above):
+- Also include "steps_timed": an array of 1–10 objects describing the same process with per-step timers.
+- Each object in "steps_timed" MUST include:
+  { "index": number (1..N), "title": "string", "instruction": "string", "duration_min": number }
+- Include a separate array "step_durations_min": numbers aligned 1:1 with "steps" (same length). Each entry is the duration in minutes for the corresponding step.
+- "steps" MUST NOT contain inline durations (no "(~10 min)" etc.). Keep them clean, concise actions.
+- "steps_timed" and "step_durations_min" must align with "steps" content (same overall process).
+- The sum of all per-step durations (either "steps_timed.*.duration_min" or "step_durations_min") should approximately equal "time_minutes".
+
+NEW (object-per-step shape requested):
+- Also include "steps_objects": an array with the same length and order as "steps".
+- Each entry MUST be exactly: { "timer": number, "Step": "string" }
+  - "timer" = integer minutes for that step
+  - "Step"  = the concise instruction text for that step (same wording as in "steps")
+- "steps_objects" must align 1:1 with "steps". Do NOT include extra fields.
+
 Return STRICT JSON only:
-{ "recipes": [{ "title":"string", "ingredients":["string"], "steps":["string"], "time_minutes": number, "difficulty": "easy" | "medium" }] }
+{ "recipes": [{
+  "title":"string",
+  "ingredients":["string"],
+  "steps":["string"],                             // no inline times here
+  "step_durations_min":[number],                  // same length/order as "steps"
+  "steps_timed":[{ "index": number, "title":"string", "instruction":"string", "duration_min": number }],
+  "steps_objects":[{ "timer": number, "Step": "string" }],   // <-- exact shape you asked for
+  "time_minutes": number,
+  "difficulty": "easy" | "medium"
+}] }
 `.trim();
+
 
   const userPrompt =
     `My fridge/pantry product titles:\n` +
@@ -149,7 +268,13 @@ Return STRICT JSON only:
 };
 
 /** Save/merge recipes under /users/{uid}/Recipes/{slug(title)} */
-const saveRecipesToFirestore = async ({ recipes, productTitles, model }) => {
+const saveRecipesToFirestore = async ({
+  recipes,
+  productTitles,
+  model,
+  apiKey,            // 👈 NEW: to allow image generation here
+  withImages = true, // 👈 toggle if you want
+}) => {
   const uid = getAuth()?.currentUser?.uid;
   if (!uid || !recipes?.length) return;
 
@@ -163,17 +288,43 @@ const saveRecipesToFirestore = async ({ recipes, productTitles, model }) => {
     const id = slug(title);
     const ref = doc(col, id);
 
+    // ----- compute steps_objects if missing -----
+    const steps = Array.isArray(r?.steps) ? r.steps : [];
+    const total = toInt(r?.time_minutes, 0);
+    const givenDurations = Array.isArray(r?.step_durations_min) ? r.step_durations_min : null;
+    const durations =
+      givenDurations && givenDurations.length === steps.length
+        ? givenDurations.map((n) => toInt(n, 5))
+        : allocateDurations(steps, total);
+
+    const steps_objects = Array.isArray(r?.steps_objects) && r.steps_objects.length === steps.length
+      ? r.steps_objects.map((o, i) => ({
+          timer: toInt(o?.timer, toInt(durations[i], 5)),
+          Step: toStr(o?.Step, steps[i] || ""),
+        }))
+      : buildStepsObjects(steps, durations);
+
+    // ----- NEW: generate image (non-blocking if it fails) -----
+    let image_url = null;
+    if (withImages && apiKey) {
+      image_url = await generateRecipeImageUrl({ apiKey, title });
+    }
+
     const payload = {
       title,
       ingredients: Array.isArray(r?.ingredients) ? r.ingredients : [],
-      steps: Array.isArray(r?.steps) ? r.steps : [],
+      steps,
+      step_durations_min: durations,
+      steps_objects,
+      steps_timed: Array.isArray(r?.steps_timed) ? r.steps_timed : [],
       time_minutes: toInt(r?.time_minutes, null),
       difficulty: r?.difficulty === "medium" ? "medium" : "easy",
       source: "gpt",
       model: toStr(model, ""),
-      based_on: productTitles, // titles we sent in
+      based_on: productTitles,
+      image_url,               // 👈 saved field
       updated_at: now,
-      created_at: now, // merge keeps first-set created_at or overwrites with server time if missing
+      created_at: now,
     };
 
     await setDoc(ref, payload, { merge: true });
@@ -193,6 +344,10 @@ export default function RecipesFromInventory({
 }) {
   const [invDocs, setInvDocs] = useState([]);
   const [loadingInv, setLoadingInv] = useState(true);
+  const { present, isS3Open, isS8Open, isS9Open } = useSheets();
+  const {
+    CurrentReceipeFromInventory, setCurrentReceipeFromInventory,
+  } = useAddToInventory()
 
   // 🔁 We ALWAYS render from Firestore Recipes (not API memory)
   const [recipesDocs, setRecipesDocs] = useState([]);
@@ -291,6 +446,8 @@ export default function RecipesFromInventory({
         recipes: result,
         productTitles,
         model,
+        apiKey,            // 👈 pass here so images are created & saved
+        withImages: true,
       });
 
       // UI will refresh via the Recipes onSnapshot listener
@@ -326,8 +483,12 @@ export default function RecipesFromInventory({
 
 
   /* ---- Card UI ---- */
-  const renderRecipe = ({ item: r }) => (
-    <View
+ const renderRecipe = ({ item: r }) => (
+    <TouchableOpacity onPress={() => {
+      setCurrentReceipeFromInventory(r)
+      present("Receipes_From_Inventory")
+    }}
+    activeOpacity={0.8}
       style={{
         backgroundColor: "#fff",
         width: horizontal ? size(170) : "92%",
@@ -347,23 +508,23 @@ export default function RecipesFromInventory({
       </Text>
 
      <Text
-  style={{
-    fontSize: size(15),
-    fontWeight: "700",
-    marginLeft: width(5),
-    position: "absolute",
-    bottom: height(6),
-    color: difficultyColor(r?.difficulty),
-  }}
->
-  {r?.difficulty || "easy"}
-</Text>
+      style={{
+        fontSize: size(15),
+        fontWeight: "700",
+        marginLeft: width(5),
+        position: "absolute",
+        bottom: height(6),
+        color: difficultyColor(r?.difficulty),
+      }}
+    >
+      {r?.difficulty || "easy"}
+    </Text>
       <Text style={{ fontSize: size(12), marginLeft: width(5), color: "#A5AEB8", position: 'absolute', bottom: height(3) }}>
          {r?.time_minutes ? `${r.time_minutes} min` : "—"} · {r?.difficulty || "easy"}
       </Text>
 
      
-    </View>
+    </TouchableOpacity>
   );
 
   const busy = generating || loadingInv || loadingRecipesColl;
@@ -439,7 +600,7 @@ const snapOffsets = Array.from(
       </View>
     ) : (
       <Text style={{ paddingHorizontal: width(5), color: "#555" }}>
-        No recipes yet. Tap “Generate”.
+        No recipes yet.
       </Text>
     )
   }

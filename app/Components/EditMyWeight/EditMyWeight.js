@@ -14,6 +14,7 @@ import {
   serverTimestamp,
   setDoc,
 } from '@react-native-firebase/firestore';
+import { Check } from 'lucide-react-native';
 
 const KG_MIN = 30;
 const KG_MAX = 200;
@@ -181,17 +182,22 @@ export default function EditMyWeight({ initial = 65, onSaved }) {
       <TouchableOpacity
         onPress={onPressSave}
         disabled={saving}
-        style={{
-          marginTop: height(3),
-          paddingVertical: 14,
-          paddingHorizontal: 28,
-          borderRadius: 10,
-          backgroundColor: saving ? '#BCC1CA' : '#000',
-        }}
-      >
-        <Text style={{ color: '#fff', fontSize: size(16), fontWeight: '800' }}>
-          {saving ? 'Saving…' : 'Save'}
+       style={{
+        height: size(60),
+        bottom: height(1),
+        paddingHorizontal: 25,
+        right: width(1),
+        position: "absolute",
+        flexDirection: "row",
+        justifyContent: "center",
+        alignItems: "center",
+        borderRadius: 15,
+        backgroundColor: "#151515",
+        }}>
+        <Text style={{ color: "#fff", fontSize: size(17), marginRight: width(3), fontWeight: "bold" }}>
+        Save
         </Text>
+        <Check size={18} color={"#fff"} />
       </TouchableOpacity>
     </View>
   );
