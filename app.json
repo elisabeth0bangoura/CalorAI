@@ -51,6 +51,12 @@
           "calendarPermission": "The app needs to access your calendar."
         }
       ],
+       [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow $(PRODUCT_NAME) to use your location."
+        }
+      ],
       [
         "expo-video",
         {
@@ -98,14 +104,15 @@
       "expo-apple-authentication",
       "@react-native-firebase/app",
       "@react-native-firebase/auth",
-      "expo-mail-composer"
+      "expo-mail-composer",
+      "expo-localization"
     ],
     "experiments": {
       "typedRoutes": true
     },
     "extra": {
       "router": {},
-       "oneSignalAppId": "d9c8472c-8b91-451f-9789-8d0b3bd8737c",
+      "oneSignalAppId": "d9c8472c-8b91-451f-9789-8d0b3bd8737c",
       "eas": {
         "projectId": "50d7c022-6770-4ddc-9828-b2c78e68a3c1"
       }

@@ -441,7 +441,7 @@ export default function Receipes_From_Inventory() {
             borderRadius: 12,
             alignItems: "center",
             justifyContent: "center",
-            bottom: height(12),
+            bottom: height(10),
             shadowColor: "#000",
             shadowOffset: { width: 0, height: 2 },
             shadowOpacity: 0.32,

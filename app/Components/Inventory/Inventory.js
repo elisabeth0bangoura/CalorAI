@@ -1,4 +1,3 @@
-// ./app/Inventory/Inventory.js
 import { useRevenueCat } from "@/app/Context/RevenueCatContext";
 import { getAuth } from "@react-native-firebase/auth";
 import firestore, {
@@ -37,6 +36,34 @@ const toNum = (n, d = 0) => {
 };
 const hasVal = (v) => v !== undefined && v !== null;
 
+/* ----------- Image helper: prefetch + cache-bust ----------- */
+const ItemThumb = ({ uri, updatedAt }) => {
+  const finalUri = React.useMemo(() => {
+    if (!uri) return null;
+    const ts =
+      (updatedAt?.seconds ?? updatedAt?._seconds) ??
+      (typeof updatedAt === "number" ? updatedAt : Date.now());
+    return uri.includes("?") ? `${uri}&t=${ts}` : `${uri}?t=${ts}`;
+  }, [uri, updatedAt]);
+
+  useEffect(() => {
+    if (finalUri) {
+      try {
+        Image.prefetch(finalUri, { cachePolicy: "memory-disk" });
+      } catch {}
+    }
+  }, [finalUri]);
+
+  return (
+    <Image
+      source={finalUri ? { uri: finalUri } : null}
+      style={{ height: "100%", width: "100%" }}
+      cachePolicy="memory-disk"
+      transition={100}
+    />
+  );
+};
+
 /* ----------------- QUANTITY helpers ----------------- */
 const getCounterKey = (it) =>
   hasVal(it.qty) ? "qty" : hasVal(it.units_per_pack) ? "units_per_pack" : "qty";
@@ -73,8 +100,8 @@ const changeQty = async (it, delta) => {
 
 export default function Inventory() {
   const { register, present, dismiss, dismissAll } = useSheets();
-    const { isPremium, loading, ClickedOnBtn, setClickedOnBtn,  } = useRevenueCat();
-  
+  const { isPremium, loading, ClickedOnBtn, setClickedOnBtn } = useRevenueCat();
+
   const [items, setItems] = useState([]);
   const [loadingHere, setLoading] = useState(true);
   const [exitingIds, setExitingIds] = useState([]);
@@ -171,9 +198,10 @@ export default function Inventory() {
 
   return (
     <View style={{ backgroundColor: "#fff", height: "100%", width: "100%" }}>
-      <ScrollView contentContainerStyle={{
-        paddingBottom: height(25)
-      }}
+      <ScrollView
+        contentContainerStyle={{
+          paddingBottom: height(25)
+        }}
         style={{
           height: "100%",
           paddingTop: height(16),
@@ -192,9 +220,10 @@ export default function Inventory() {
             Your Fridge
           </Text>
 
-          <TouchableOpacity onPress={() => {
-            setClickedOnBtn(true)
-          }}
+          <TouchableOpacity
+            onPress={() => {
+              setClickedOnBtn(true);
+            }}
             style={{
               position: "absolute",
               right: width(5),
@@ -285,12 +314,12 @@ export default function Inventory() {
                       borderRadius: 10,
                       overflow: "hidden",
                       backgroundColor: "#ccc",
-                    }}>
-                    <Image
-                      source={{ uri: item.image_cloud_url }}
-                      style={{ height: "100%", width: "100%" }}
-                     // cachePolicy="memory-disk"       // stronger than "disk"
-                      transition={100}                // smooth in
+                    }}
+                  >
+                    {/* swapped Image -> ItemThumb */}
+                    <ItemThumb
+                      uri={item.image_cloud_url}
+                      updatedAt={item.updated_at || item.created_at}
                     />
                   </View>
 
@@ -435,4 +464,3 @@ export default function Inventory() {
     </View>
   );
 }
-

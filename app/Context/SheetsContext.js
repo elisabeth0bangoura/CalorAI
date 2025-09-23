@@ -42,8 +42,7 @@ export function SheetsProvider({ children }) {
  const [isLogIn, setIsLogIn] = useState(false)
  const [isHome_Add_Widget, setIsHome_Add_Widget] = useState(false)
  const [isReceipes_From_Inventory, setIssetIsReceipes_From_Inventory] = useState(false)
-
-          
+ const [isCigarette_Sheet, setIsCigarette_Sheet] = useState(false)
 
 
   // ---- Central flag switcher
@@ -80,8 +79,11 @@ export function SheetsProvider({ children }) {
       case "LogIn": return setIsLogIn(open);
       case "Home_Add_Widget": return setIsHome_Add_Widget(open);
       case "Receipes_From_Inventory": return setIssetIsReceipes_From_Inventory(open);
+      case "Cigarette_Sheet": return setIsCigarette_Sheet(open);
 
-   
+             
+
+
       default: return;
     }
   };
@@ -137,6 +139,7 @@ export function SheetsProvider({ children }) {
      isLogIn, setIsLogIn,
       isHome_Add_Widget, setIsHome_Add_Widget,
     isReceipes_From_Inventory, setIssetIsReceipes_From_Inventory,
+     isCigarette_Sheet, setIsCigarette_Sheet
     }),
     [
       isS1Open, 
@@ -175,7 +178,8 @@ export function SheetsProvider({ children }) {
      isDelete_Account, setIsDelete_Account,
      isLogIn, setIsLogIn,
       isHome_Add_Widget, setIsHome_Add_Widget,
-    isReceipes_From_Inventory, setIssetIsReceipes_From_Inventory
+    isReceipes_From_Inventory, setIssetIsReceipes_From_Inventory,
+     isCigarette_Sheet, setIsCigarette_Sheet
     ]
   );
 

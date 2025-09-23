@@ -1441,7 +1441,20 @@ function PageAfterScan_FoodLabel() {
                       fontSize: size(16),
                     }}
                   >
-                    {item?.amt ?? "+0 cal"}
+                     {
+                    / water/i.test(item?.label ?? "")
+                    ? ((Number(currentItem?.water_ml) || 0) >= 1000
+                        ? `${(((Number(currentItem?.water_ml) || 0) / 1000).toFixed(((Number(currentItem?.water_ml) || 0) % 1000 ? 1 : 0)))} L`
+                        : `${Number(currentItem?.water_ml) || 0} ml`
+                      )
+                    : /coffee/i.test(item?.label ?? "")
+                      ? (() => {
+                          const cups = Number(currentItem?.coffee_cups) || 0;
+                          const v = Number.isInteger(cups) ? cups : Number(cups.toFixed(1));
+                          return `${v} ${Math.abs(v) === 1 ? "cup" : "cups"}`;
+                        })()
+                      : `${(parseFloat(String(item?.amt ?? "0").replace(/[^\d.]/g, "")) || 0)} cal`
+                  }
                   </Text>
                 </Animated.View>
               </View>

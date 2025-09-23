@@ -56,7 +56,6 @@ import {
   Wheat,
 } from "lucide-react-native";
 
-/* ---------- Ring theme & helpers ---------- */
 const DEFAULT_COLORS = {
   bg: "#ffffff",
   card: "#F4F5F7",
@@ -89,14 +88,12 @@ const ringProps = {
   rotation: -90,
 };
 
-// clamp to a 0–100 int
 const clampPct = (current = 0, goal = 1) => {
   const g = Math.max(1, Number(goal || 1));
   const c = Math.max(0, Number(current || 0));
   return Math.round(Math.min(100, (c / g) * 100));
 };
 
-/* ---------- Tiny progress bar ---------- */
 const ProgressBar = memo(function ProgressBar({
   height: h = 8,
   progress = 0,
@@ -139,7 +136,6 @@ const ProgressBar = memo(function ProgressBar({
   );
 });
 
-/* --------------------- Local Day/Total helpers --------------------- */
 const getLocalDayKey = (d = new Date()) => {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
@@ -147,7 +143,6 @@ const getLocalDayKey = (d = new Date()) => {
   return `${y}-${m}-${dd}`;
 };
 
-// Sum meals in users/{uid}/Today/{dayKey} and write users/{uid}/Daily/{dayKey}
 const recalcAndWriteDailyTotals = async (uid) => {
   if (!uid) return;
   const db = getFirestore();
@@ -194,9 +189,7 @@ const recalcAndWriteDailyTotals = async (uid) => {
     { merge: true }
   );
 };
-/* ------------------------------------------------------------------ */
 
-/* ---------- Header (memoized) ---------- */
 const HeaderView = memo(function HeaderView({
   userId,
   vals,
@@ -331,7 +324,7 @@ const HeaderView = memo(function HeaderView({
               fontWeight: "800",
             }}
           >
-            Coffee <Text style={{ fontWeight: "500" }}>left</Text>
+            Cups of Coffee <Text style={{ fontWeight: "500" }}>left</Text>
           </Text>
         </View>
       </View>
@@ -405,6 +398,16 @@ const HeaderView = memo(function HeaderView({
     [animProps, colorsMap.cal, maxes.calories, pctFromLeft, vals.caloriesLeft]
   );
 
+  const waterDisplay = useMemo(() => {
+    const leftMl = Number(vals.waterLeft || 0);
+    const maxMl  = Number(maxes.waterMl || 0);
+    const useLiters = maxMl >= 1000 || leftMl >= 1000;
+    const value = useLiters ? Number((leftMl / 1000).toFixed(1)) : Math.round(leftMl);
+    const max   = useLiters ? Number((maxMl / 1000).toFixed(1))  : Math.max(1, Math.round(maxMl));
+    const unit  = useLiters ? "L" : "ml";
+    return { value, max, unit };
+  }, [vals.waterLeft, maxes.waterMl]);
+
   const SmallCard = useCallback(
     ({ kind, label, value, unit, max, colorKey, Icon, index, widthPercent }) => (
       <View
@@ -431,7 +434,7 @@ const HeaderView = memo(function HeaderView({
           label="left"
           value={value}
           unit={unit}
-          toFixed={0}
+          toFixed={kind === "water" && unit === "L" ? 1 : 0}
           color="#000"
           numberStyle={{ fontSize: size(20) }}
         />
@@ -516,7 +519,11 @@ const HeaderView = memo(function HeaderView({
 
   const CigarettesWide = useCallback(
     (widthPercent) => (
-      <View
+      <TouchableOpacity
+        activeOpacity={0.8}
+        onPress={() => {
+          present("Home_Cigarettes_Component");
+        }}
         key="cigs"
         style={{
           height: height(20),
@@ -554,6 +561,7 @@ const HeaderView = memo(function HeaderView({
               marginTop: height(1),
               marginBottom: height(2),
               fontWeight: "800",
+              textAlign: "center",
             }}
           >
             Cigarettes Left
@@ -564,7 +572,8 @@ const HeaderView = memo(function HeaderView({
           <CircularProgressBase
             {...ringProps}
             {...animProps(1)}
-            value={pctFromLeft(vals.cigarettesLeft, maxes.cigarettes)}
+            // progress uses DONE / GOAL instead of "left"
+            value={clampPct(vals.cigarettesDone, maxes.cigarettes)} // <-- updated
             maxValue={100}
             radius={50}
             activeStrokeWidth={9}
@@ -572,15 +581,31 @@ const HeaderView = memo(function HeaderView({
             activeStrokeColor={colorsMap.cigarette}
             inActiveStrokeColor={colorsMap.cigarette}
           >
-            <Cigarette size={25} color="#000" />
+            {/* Icon with overlay numbers "done / goal" */}
+            <View style={{ alignItems: "center", justifyContent: "center" }}>
+              <Cigarette
+               size={25} color="#000" />
+              <View style={{ position: "absolute", alignItems: "center" }}>
+             
+             
+                <Text style={{ fontSize: size(11), color: "#6B7280" }}>
+                  of {maxes.cigarettes}
+                </Text>
+              </View>
+            </View>
           </CircularProgressBase>
         </View>
-      </View>
+      </TouchableOpacity>
     ),
-    [animProps, colorsMap.cigarette, maxes.cigarettes, pctFromLeft, vals.cigarettesLeft]
+    [
+      animProps,
+      colorsMap.cigarette,
+      maxes.cigarettes,
+      present,
+      vals.cigarettesDone, // <-- dependency
+    ]
   );
 
-  /* ----------------- DYNAMIC PACKING ----------------- */
   const halfPool = useMemo(() => {
     const out = [];
     if (enabledOr("coffee", true)) out.push("coffee");
@@ -689,10 +714,10 @@ const HeaderView = memo(function HeaderView({
 
   const smallMeta = {
     water: {
-      label: "Protein",
-      value: vals.waterLeft,
-      unit: "g",
-      max: maxes.waterMl,
+      label: "Water",
+      value: waterDisplay.value,
+      unit: waterDisplay.unit,
+      max: waterDisplay.max,
       colorKey: "water",
       Icon: GlassWater,
     },
@@ -881,7 +906,6 @@ const HeaderView = memo(function HeaderView({
 
   return (
     <View style={{ paddingTop: height(12), backgroundColor: "#fff" }}>
-      {/* Heatmap */}
       <View style={{ minHeight: height(8), justifyContent: "center" }}>
         {!sleeping && showHeatmap ? (
           <TwoRowMonthlyHeatmap
@@ -904,7 +928,6 @@ const HeaderView = memo(function HeaderView({
         )}
       </View>
 
-      {/* Add widget */}
       <TouchableOpacity
         onPress={() => {
           present("Home_Add_Widget");
@@ -924,13 +947,12 @@ const HeaderView = memo(function HeaderView({
         </Text>
       </TouchableOpacity>
 
-      {/* PagerView */}
       {!sleeping && showSwiper ? (
         filteredSlides.length > 0 ? (
           <>
             <PagerView
               ref={pagerRef}
-              style={{ height: height(52), width: "100%" }}
+              style={{ height: height(55), width: "100%" }}
               initialPage={0}
               onPageSelected={onPagerSelected}
               offscreenPageLimit={1}
@@ -941,14 +963,13 @@ const HeaderView = memo(function HeaderView({
               {filteredSlides.map((rows, i) => renderRows(rows, `slide-${i}`))}
             </PagerView>
 
-            {/* Dots (hide if single page) */}
             {filteredSlides.length > 1 && (
               <View
                 style={{
                   flexDirection: "row",
                   justifyContent: "center",
                   alignItems: "center",
-                  marginTop: 12,
+                  marginTop: 0,
                   marginBottom: 12,
                 }}
               >
@@ -982,7 +1003,6 @@ const HeaderView = memo(function HeaderView({
               </View>
             )}
 
-            {/* Section titles */}
             <Text
               style={{
                 fontSize: size(18),
@@ -993,7 +1013,6 @@ const HeaderView = memo(function HeaderView({
             >
               Recently eaten
             </Text>
-          
           </>
         ) : (
           <View
@@ -1023,7 +1042,6 @@ const HeaderView = memo(function HeaderView({
   );
 });
 
-/* ------------------------- helpers ------------------------- */
 const toDateFromAny = (t) => {
   if (!t) return null;
   if (typeof t === "number") return new Date(t > 1e12 ? t : t * 1000);
@@ -1050,7 +1068,22 @@ const formatLocalTime = (date) => {
     return `${h}:${m}`;
   }
 };
-/* ----------------------------------------------------------- */
+
+const fmtMlOrL = (ml) => {
+  const v = Number(ml) || 0;
+  if (v >= 1000) {
+    const L = v / 1000;
+    const s = L.toFixed(1);
+    return s.endsWith(".0") ? `${Math.round(L)} L` : `${s} L`;
+  }
+  return `${Math.round(v)} ml`;
+};
+
+const fmtCups = (cups) => {
+  const v = Number(cups) || 0;
+  const s = Number.isInteger(v) ? v : Number(v.toFixed(1));
+  return `${s} ${Math.abs(s) === 1 ? "cup" : "cups"}`;
+};
 
 /* =================== HOME =================== */
 export default function Home() {
@@ -1107,7 +1140,6 @@ export default function Home() {
     }
   }, [sheetsBusy]);
 
-  /* ---------- Auth + Firestore (Today/{YYYY-MM-DD}) ---------- */
   const foodsIdsRef = useRef([]);
   useEffect(() => {
     const auth = getAuth();
@@ -1141,7 +1173,7 @@ export default function Home() {
           if (ids !== foodsIdsRef.current.join("|")) {
             foodsIdsRef.current = rows.map((r) => r.id);
             setFoods(rows);
-            await recalcAndWriteDailyTotals(user.uid); // keep Daily up to date
+            await recalcAndWriteDailyTotals(user.uid);
             openAnimWindow(700);
           }
           setErr(null);
@@ -1165,7 +1197,6 @@ export default function Home() {
     };
   }, [openAnimWindow, sheetsBusy]);
 
-  /* ---------- AllNeeds/current listener (real-time) ---------- */
   useEffect(() => {
     if (!userId) {
       setNeedsConfig({ colors: null, enabled: null, focus: null });
@@ -1190,31 +1221,23 @@ export default function Home() {
     return () => unsub && unsub();
   }, [userId]);
 
-  /* ---------- Delete + open/edit actions ---------- */
-const deleteItem = useCallback(async (id) => {
-  try {
-    const uid = getAuth()?.currentUser?.uid;
-    if (!uid || !id) return;
-    const db = getFirestore();
-    const dayKey = getLocalDayKey();
+  const deleteItem = useCallback(async (id) => {
+    try {
+      const uid = getAuth()?.currentUser?.uid;
+      if (!uid || !id) return;
+      const db = getFirestore();
+      const dayKey = getLocalDayKey();
 
-    // Correct path: /users/$uid/Today/$dayKey/List/$id
-    await deleteDoc(doc(db, "users", uid, "Today", dayKey, "List", id));
-
-    // Also delete from RecentlyEaten to stay consistent
-    await deleteDoc(doc(db, "users", uid, "RecentlyEaten", id));
-
-    // And from AllTimeLineScan if you mirror there
-    await deleteDoc(doc(db, "users", uid, "AllTimeLineScan", id));
-
-    await recalcAndWriteDailyTotals(uid);
-
-    Haptics.notificationAsync?.(Haptics.NotificationFeedbackType.Success);
-  } catch (e) {
-    console.warn("Delete failed:", e?.message || e);
-    Haptics.notificationAsync?.(Haptics.NotificationFeedbackType.Error);
-  }
-}, []);
+      await deleteDoc(doc(db, "users", uid, "Today", dayKey, "List", id));
+      await deleteDoc(doc(db, "users", uid, "RecentlyEaten", id));
+      await deleteDoc(doc(db, "users", uid, "AllTimeLineScan", id));
+      await recalcAndWriteDailyTotals(uid);
+      Haptics.notificationAsync?.(Haptics.NotificationFeedbackType.Success);
+    } catch (e) {
+      console.warn("Delete failed:", e?.message || e);
+      Haptics.notificationAsync?.(Haptics.NotificationFeedbackType.Error);
+    }
+  }, []);
 
   const onOpenItem = useCallback(
     (item) => {
@@ -1225,104 +1248,114 @@ const deleteItem = useCallback(async (id) => {
     [present, setCurrentItem, setCurrentItemId]
   );
 
-  /* ---------- List item with native context menu ---------- */
- 
-const renderItem = useCallback(
-  ({ item }) => {
-    const id = item?.id ?? "";
-    if (!id) return null;
+  const rightLabelForItem = (item) => {
+    const waterMl = Number(item?.water_ml);
+    if (Number.isFinite(waterMl) && waterMl > 0) return fmtMlOrL(waterMl);
+    const cups = Number(item?.coffee_cups);
+    if (Number.isFinite(cups) && cups > 0) return fmtCups(cups);
+    const kcal = Math.round(Number(item?.items?.[0]?.calories_kcal ?? item?.calories_kcal_total ?? 0));
+    return `+${kcal} cal`;
+  };
 
-    return (
-      <ContextMenu
-        title={item?.items?.[0]?.name ?? "Meal"}
-        actions={[
-          { title: "Open",  systemIcon: "eye" },
-          { title: "Edit",  systemIcon: "pencil" },
-          { title: "Delete", systemIcon: "trash", destructive: true },
-        ]}
-        onPreviewPress={() => onOpenItem(item)}      // tap on preview -> Open
-        onPress={(e) => {
-          const name = e.nativeEvent?.name;
-          if (name === "Open" || name === "Edit") onOpenItem(item);
-          if (name === "Delete") deleteItem(id);
-        }}
-        previewBackgroundColor="#FFFFFF"
-        borderRadius={20}
-      >
-        {/* ONE child only; this view is both the preview and the tappable row */}
-        <Pressable
-          onPress={() => onOpenItem(item)}            // normal tap -> open sheet
-          style={{
-            top: height(4),
-            height: size(80),
-            paddingHorizontal: 20,
-            paddingVertical: 20,
-            borderRadius: 20,
-            width: "90%",
-            alignSelf: "center",
-            flexDirection: "row",
-            marginBottom: height(1),
-            backgroundColor: "#fff",
-            overflow: "hidden",
+  const renderItem = useCallback(
+    ({ item }) => {
+      const id = item?.id ?? "";
+      if (!id) return null;
+
+      return (
+        <ContextMenu
+          title={item?.items?.[0]?.name ?? "Meal"}
+          actions={[
+            { title: "Open", systemIcon: "eye" },
+            { title: "Edit", systemIcon: "pencil" },
+            { title: "Delete", systemIcon: "trash", destructive: true },
+          ]}
+          onPreviewPress={() => onOpenItem(item)}
+          onPress={(e) => {
+            const name = e.nativeEvent?.name;
+            if (name === "Open" || name === "Edit") onOpenItem(item);
+            if (name === "Delete") deleteItem(id);
           }}
+          previewBackgroundColor="#FFFFFF"
+          borderRadius={20}
         >
-          <View
+          <Pressable
+            onPress={() => onOpenItem(item)}
             style={{
-              alignItems: "center",
-              width: size(50),
-              borderRadius: size(50) / 2,
-              justifyContent: "center",
-              height: size(50),
+              top: height(4),
+              height: size(80),
+              paddingHorizontal: 20,
+              paddingVertical: 20,
+              borderRadius: 20,
+              width: "90%",
               alignSelf: "center",
+              flexDirection: "row",
+              marginBottom: height(1),
+              backgroundColor: "#fff",
               overflow: "hidden",
             }}
           >
-            <Image
-              source={{ uri: item.image_cloud_url }}
-              style={{ height: "100%", width: "100%" }}
-              contentFit="cover"
-              cachePolicy="memory-disk"
-              transition={100}
-            />
-          </View>
+            <View
+              style={{
+                alignItems: "center",
+                width: size(50),
+                borderRadius: size(50) / 2,
+                justifyContent: "center",
+                height: size(50),
+                alignSelf: "center",
+                overflow: "hidden",
+              }}
+            >
+              <Image
+                source={{ uri: item.image_cloud_url }}
+                style={{ height: "100%", width: "100%" }}
+                contentFit="cover"
+                cachePolicy="memory-disk"
+                transition={100}
+              />
+            </View>
 
-          <View style={{ marginLeft: width(5), width: "90%" }}>
-            <Text style={{ fontSize: size(15), fontWeight: "800", width: "70%" }} numberOfLines={1}>
-              {item?.items?.[0]?.name ?? "Item"}
-            </Text>
+            <View style={{ marginLeft: width(5), width: "90%" }}>
+              <Text
+                style={{ fontSize: size(15), fontWeight: "800", width: "70%" }}
+                numberOfLines={1}
+              >
+                {item?.items?.[0]?.name ?? "Item"}
+              </Text>
 
-            <Text style={{ fontSize: 14, fontWeight: "bold", position: "absolute", right: width(5) }}>
-              +{Math.round(Number(item?.items?.[0]?.calories_kcal || 0))} cal
-            </Text>
+              <Text
+                style={{
+                  fontSize: 14,
+                  fontWeight: "bold",
+                  position: "absolute",
+                  right: width(5),
+                }}
+              >
+                {rightLabelForItem(item)}
+              </Text>
 
-            <Text style={{ color: "#BBC1CB", marginTop: height(0.5) }}>
-              {formatLocalTime(
-                toDateFromAny(
-                  item?.created_at ??
-                  item?.timestamp ??
-                  item?.createdAt ??
-                  item?.time ??
-                  item?.date ??
-                  item?.ts
-                )
-              )}
-            </Text>
-          </View>
-        </Pressable>
-      </ContextMenu>
-    );
-  },
-  [deleteItem, onOpenItem]
-);
-
-
-
-
-
+              <Text style={{ color: "#BBC1CB", marginTop: height(0.5) }}>
+                {formatLocalTime(
+                  toDateFromAny(
+                    item?.created_at ??
+                      item?.timestamp ??
+                      item?.createdAt ??
+                      item?.time ??
+                      item?.date ??
+                      item?.ts
+                  )
+                )}
+              </Text>
+            </View>
+          </Pressable>
+        </ContextMenu>
+      );
+    },
+    [deleteItem, onOpenItem]
+  );
 
   const keyExtractor = useCallback((item, i) => item?.id ?? String(i), []);
 
-  /* ===== Targets from habitSettings (coffee + cigarettes) ===== */
   const [habitSettings, setHabitSettings] = useState(null);
   useEffect(() => {
     if (!userId) {
@@ -1352,7 +1385,12 @@ const renderItem = useCallback(
     return Number.isFinite(Number(v)) ? Number(v) : 0;
   }, [habitSettings]);
 
-  /* ===== Derived numbers for the header ===== */
+  // <-- added: today's done count for cigarettes
+  const cigarettesDone = useMemo(
+    () => Number(today?.cigarettesToday || 0),
+    [today]
+  );
+
   const vals = useMemo(() => {
     const n = (x) => (Number.isFinite(Number(x)) ? Number(x) : 0);
     return {
@@ -1367,8 +1405,9 @@ const renderItem = useCallback(
       sugarLeft: Math.max(0, n(targets?.sugarG) - n(today?.sugarToday)),
       sodiumLeft: Math.max(0, n(targets?.sodiumMg) - n(today?.sodiumToday)),
       cigarettesLeft: Math.max(0, n(cigarettesTarget) - n(today?.cigarettesToday)),
+      cigarettesDone, // <-- added
     };
-  }, [targets, today, coffeeTarget, cigarettesTarget]);
+  }, [targets, today, coffeeTarget, cigarettesTarget, cigarettesDone]); // <-- dep added
 
   useEffect(() => {
     if (sheetsBusy) return;
@@ -1382,7 +1421,6 @@ const renderItem = useCallback(
     prevValsRef.current = vals;
   }, [vals, openAnimWindow, sheetsBusy]);
 
-  /* ===== Max values ===== */
   const maxes = useMemo(() => {
     const atLeast1 = (x) => Math.max(1, Number(x ?? 1));
     return {
@@ -1420,7 +1458,7 @@ const renderItem = useCallback(
 
   return (
     <View style={{ backgroundColor: "#fff", height: "100%", width: "100%" }}>
-      <Animated.FlatList 
+      <Animated.FlatList
         data={useMemo(() => {
           const getMs = (it) => {
             const t =

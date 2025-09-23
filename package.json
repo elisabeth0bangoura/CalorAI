@@ -74,6 +74,7 @@
     "react-native-gesture-handler": "~2.24.0",
     "react-native-google-places-autocomplete": "^2.5.7",
     "react-native-haptic-feedback": "^2.3.3",
+    "react-native-localize": "^3.5.2",
     "react-native-mmkv": "^3.3.0",
     "react-native-pager-view": "6.7.1",
     "react-native-purchases": "^9.4.0",
@@ -90,7 +91,9 @@
     "react-native-wagmi-charts": "^2.7.1",
     "react-native-web": "~0.20.0",
     "react-native-webview": "13.13.5",
-    "rn-bubble-chart": "^1.0.0"
+    "rn-bubble-chart": "^1.0.0",
+    "expo-localization": "~16.1.6",
+    "expo-location": "~18.1.6"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",

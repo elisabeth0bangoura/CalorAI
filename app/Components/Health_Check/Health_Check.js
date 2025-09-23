@@ -4,6 +4,7 @@ import { getAuth } from "@react-native-firebase/auth";
 import { collection, getFirestore, onSnapshot, orderBy, query } from "@react-native-firebase/firestore";
 import { useFocusEffect } from "@react-navigation/native";
 import { Image } from "expo-image";
+import * as Localization from "expo-localization";
 import * as LucideIcons from "lucide-react-native";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppState, FlatList, Platform, Text, TouchableOpacity, View } from "react-native";
@@ -20,6 +21,17 @@ const COL = {
   placeholder: "#F1F3F7",
   fabBg: "#111111",
   fabFg: "#FFFFFF",
+};
+
+/* ---------- locale & tz (Expo) ---------- */
+const getLocaleAndTimeZone = () => {
+  // Always English (US). Change to 'en-GB' for UK-style dates if you prefer.
+  const locale = "en-US";
+  const tz =
+    Localization.getCalendars?.()[0]?.timeZone ||
+    Localization.timezone ||
+    undefined;
+  return { locale, timeZone: tz };
 };
 
 /* ---------- time helpers (LOCAL, no DST weirdness) ---------- */
@@ -70,7 +82,6 @@ const PlaceholderBlock = () => (
       height: height(10),
       borderRadius: 15,
       backgroundColor: COL.placeholder,
- 
     }}
   />
 );
@@ -93,10 +104,6 @@ const ItemCard = ({ itemDoc }) => {
     diabetes:{ bg: "#FFF6E6", fg: "#F59E0B", icon: "Syringe",  label: "Diabetes" },
   };
 
-
-
-
-  
   return (
     <View
       style={{
@@ -140,7 +147,7 @@ const ItemCard = ({ itemDoc }) => {
           keyExtractor={(f, i) => `${f.key}-${i}`}
           showsHorizontalScrollIndicator={false}
           directionalLockEnabled
-          style={{ height: height(20),  }}
+          style={{ height: height(20) }}
           contentContainerStyle={{ alignItems: "center", paddingRight: width(5), paddingLeft: width(5) }}
           ItemSeparatorComponent={() => <View style={{ width: width(3) }} />}
           renderItem={({ item: f }) => {
@@ -169,6 +176,7 @@ const HOURS_START = 0;
 const HOURS_END   = 23;
 
 const DayBlock = ({ date, items, onMeasure }) => {
+  const { locale, timeZone } = useMemo(getLocaleAndTimeZone, []);
   const byHour = useMemo(() => {
     const map = new Map();
     for (let h = HOURS_START; h <= HOURS_END; h++) map.set(h, []);
@@ -183,8 +191,14 @@ const DayBlock = ({ date, items, onMeasure }) => {
     return map;
   }, [items]);
 
-  const weekday = date.toLocaleDateString([], { weekday: "long" }).toUpperCase();
-  const dateLine = date.toLocaleDateString([], { day: "2-digit", month: "long" }).toUpperCase();
+  // Locale-aware headings
+  const weekday = date
+    .toLocaleDateString(locale, { weekday: "long", timeZone })
+    .toUpperCase();
+
+  const dateLine = date
+    .toLocaleDateString(locale, { day: "2-digit", month: "long", timeZone })
+    .toUpperCase();
 
   return (
     <View onLayout={(e) => onMeasure?.(e.nativeEvent.layout.height)} style={{ paddingBottom: height(4) }}>
@@ -195,7 +209,10 @@ const DayBlock = ({ date, items, onMeasure }) => {
 
       {Array.from({ length: HOURS_END - HOURS_START + 1 }).map((_, idx) => {
         const hour = HOURS_START + idx;
-        const label = new Date(2000, 0, 1, hour, 0, 0).toLocaleTimeString([], { hour: "numeric" }).toUpperCase();
+        const label = new Date(2000, 0, 1, hour, 0, 0)
+          .toLocaleTimeString(locale, { hour: "numeric", timeZone })
+          .toUpperCase();
+
         const bucket = byHour.get(hour) || [];
         return (
           <View key={hour} style={{ flexDirection: "row", alignItems: "flex-start", paddingHorizontal: rsWidth(5), marginBottom: height(2) }}>
@@ -381,4 +398,3 @@ export default function HealthChecksCardFlatList({ userId, showHeader = true }) 
     </View>
   );
 }
-

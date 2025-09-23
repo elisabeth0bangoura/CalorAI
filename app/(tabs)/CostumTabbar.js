@@ -14,6 +14,7 @@ import PageAfterScanFood from "../Components/Camera/PageAfterScan/PageAfterScan_
 import PageAfterScan_FoodLabel from "../Components/Camera/PageAfterScan/PageAfterScan_Scan_FoodLabel/PageAfterScan_FoodLabel";
 import EditMyWeight from "../Components/EditMyWeight/EditMyWeight";
 import Home_Add_Widget from "../Components/Home/Home_Add_Widget";
+import Home_Cigarettes_Component from "../Components/Home/Home_Cigarettes_Component";
 import Receipes_From_Inventory from "../Components/Inventory/Receipes_From_Inventory";
 import EditHabit_And_Nutrition_Goals from "../Components/Profile/EditHabit_And_Nutrition_Goals/EditHabit_And_Nutrition_Goals";
 import Generate_Based_On_Habits_AndHealth from "../Components/Profile/EditHabit_And_Nutrition_Goals/Generate_Based_On_Habits_AndHealth/Generate_Based_On_Habits_AndHealth";
@@ -33,7 +34,6 @@ import TargetWeight from "../Components/Profile/Profile/TargetWeight";
 import ScanPageHome from "../Components/ScanPageHome/ScanPageHome";
 import { useCameraActive } from "../Context/CameraActiveContext";
 import { useSheets } from "../Context/SheetsContext";
-
 
 
 /* ---- memo wrappers ---- */
@@ -84,7 +84,8 @@ export default function SheetsHost() {
      isDelete_Account, setIsDelete_Account,
    isLogIn, setIsLogIn,
    isReceipes_From_Inventory, setIssetIsReceipes_From_Inventory,
-   isHome_Add_Widget, setIsHome_Add_Widget
+   isHome_Add_Widget, setIsHome_Add_Widget,
+   isCigarette_Sheet, setIsCigarette_Sheet
   } = useSheets();
 
 
@@ -118,6 +119,7 @@ export default function SheetsHost() {
   useEffect(() => { console.log("[SheetsHost] LogIn open ->", isLogIn); }, [isLogIn]);
   useEffect(() => { console.log("[SheetsHost] Home_Add_Widget open ->", isHome_Add_Widget); }, [isHome_Add_Widget]);
   useEffect(() => { console.log("[SheetsHost] Receipes_From_Inventory open ->", isReceipes_From_Inventory); }, [isReceipes_From_Inventory]);
+  useEffect(() => { console.log("[SheetsHost] isCigarette_Sheet open ->", isCigarette_Sheet); }, [isCigarette_Sheet]);
 
 
 
@@ -629,6 +631,29 @@ export default function SheetsHost() {
        <Receipes_From_Inventory />
       </TrueSheet>
 
+
+
+
+
+
+
+
+
+
+
+
+
+        <TrueSheet
+        ref={register("Home_Cigarettes_Component")}
+        sizes={["large"]}
+        cornerRadius={24}
+        enablePanDownToClose
+        backgroundColor="#fff"
+        onChange={(index) => setIsCigarette_Sheet(typeof index === "number" && index >= 0)}
+        onDismiss={() => setIsCigarette_Sheet(false)}
+      >
+       <Home_Cigarettes_Component />
+      </TrueSheet>
 
 
 
