@@ -1,4 +1,4 @@
-// HealthTimeline.js — uncompromising “Today” focus (mount/focus/resume/midnight)
+// HealthTimeline.js — uncompromising “Today” focus (mount/focus/resume/midnight) — de-flickered
 
 import { getAuth } from "@react-native-firebase/auth";
 import { collection, getFirestore, onSnapshot, orderBy, query } from "@react-native-firebase/firestore";
@@ -7,7 +7,7 @@ import { Image } from "expo-image";
 import * as Localization from "expo-localization";
 import * as LucideIcons from "lucide-react-native";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AppState, FlatList, Platform, Text, TouchableOpacity, View } from "react-native";
+import { AppState, FlatList, InteractionManager, Platform, Text, TouchableOpacity, View } from "react-native";
 import { height, width as rsWidth, size, width } from "react-native-responsive-sizes";
 
 /* ---------- tokens ---------- */
@@ -32,6 +32,12 @@ const getLocaleAndTimeZone = () => {
     undefined;
   return { locale, timeZone: tz };
 };
+
+const makeDayFormatters = (locale, timeZone) => ({
+  weekdayFmt: new Intl.DateTimeFormat(locale, { weekday: "long", timeZone }),
+  dateLineFmt: new Intl.DateTimeFormat(locale, { day: "2-digit", month: "long", timeZone }),
+  hourFmt: new Intl.DateTimeFormat(locale, { hour: "numeric", timeZone }),
+});
 
 /* ---------- time helpers (LOCAL, no DST weirdness) ---------- */
 const startOfDay = (d) => { const x = new Date(d); x.setHours(0,0,0,0); return x; };
@@ -85,7 +91,8 @@ const PlaceholderBlock = () => (
   />
 );
 
-const ItemCard = ({ itemDoc }) => {
+/* ---------- ItemCard (memo + image stable transition) ---------- */
+const ItemCard = React.memo(function ItemCard({ itemDoc }) {
   const img =
     normalizeImageUrl(itemDoc.image_cloud_url) ||
     normalizeImageUrl(itemDoc.image_url) ||
@@ -96,6 +103,10 @@ const ItemCard = ({ itemDoc }) => {
   const kcal =
     Math.round(Number(itemDoc?.items?.[0]?.calories_kcal ?? itemDoc?.calories_kcal_total ?? 0)) || null;
   const flags = buildFlags(itemDoc);
+
+  const imgUriRef = useRef(img);
+  const shouldTransition = img !== imgUriRef.current;
+  useEffect(() => { imgUriRef.current = img; }, [img]);
 
   const THEME = {
     kidney:  { bg: "#EAF2FF", fg: "#1E67FF", icon: "Droplets", label: "Kidney" },
@@ -122,7 +133,13 @@ const ItemCard = ({ itemDoc }) => {
             }}
           >
             {img ? (
-              <Image source={{ uri: img }} style={{ width: "100%", height: "100%" }} contentFit="cover" transition={120} />
+              <Image
+                source={{ uri: img }}
+                style={{ width: "100%", height: "100%" }}
+                contentFit="cover"
+                transition={shouldTransition ? 120 : 0}
+                cachePolicy="memory-disk"
+              />
             ) : (
               <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
                 <LucideIcons.Image size={18} color="#9AA3AD" />
@@ -168,14 +185,13 @@ const ItemCard = ({ itemDoc }) => {
       )}
     </View>
   );
-};
+});
 
 /* ---------- Day block (00 → 23) ---------- */
 const HOURS_START = 0;
 const HOURS_END   = 23;
 
-const DayBlock = ({ date, items, onMeasure }) => {
-  const { locale, timeZone } = useMemo(getLocaleAndTimeZone, []);
+const DayBlock = React.memo(function DayBlock({ date, items, weekday, dateLine, hourLabels, onMeasure }) {
   const byHour = useMemo(() => {
     const map = new Map();
     for (let h = HOURS_START; h <= HOURS_END; h++) map.set(h, []);
@@ -190,9 +206,6 @@ const DayBlock = ({ date, items, onMeasure }) => {
     return map;
   }, [items]);
 
-  const weekday = date.toLocaleDateString(locale, { weekday: "long", timeZone }).toUpperCase();
-  const dateLine = date.toLocaleDateString(locale, { day: "2-digit", month: "long", timeZone }).toUpperCase();
-
   return (
     <View onLayout={(e) => onMeasure?.(e.nativeEvent.layout.height)} style={{ paddingBottom: height(4) }}>
       <View style={{ paddingHorizontal: rsWidth(5), marginTop: height(5) }}>
@@ -202,9 +215,7 @@ const DayBlock = ({ date, items, onMeasure }) => {
 
       {Array.from({ length: HOURS_END - HOURS_START + 1 }).map((_, idx) => {
         const hour = HOURS_START + idx;
-        const label = new Date(2000, 0, 1, hour, 0, 0)
-          .toLocaleTimeString(locale, { hour: "numeric", timeZone })
-          .toUpperCase();
+        const label = hourLabels[idx];
 
         const bucket = byHour.get(hour) || [];
         return (
@@ -224,7 +235,13 @@ const DayBlock = ({ date, items, onMeasure }) => {
       })}
     </View>
   );
-};
+}, (prev, next) =>
+  prev.items === next.items &&
+  prev.date.getTime() === next.date.getTime() &&
+  prev.weekday === next.weekday &&
+  prev.dateLine === next.dateLine &&
+  prev.hourLabels === next.hourLabels
+);
 
 /* ---------- Main timeline (bulletproof “Today” jump) ---------- */
 export default function HealthChecksCardFlatList({ userId, showHeader = true }) {
@@ -232,16 +249,14 @@ export default function HealthChecksCardFlatList({ userId, showHeader = true }) 
   const db = getFirestore();
 
   const [rows, setRows] = useState([]);
+  const [bootReady, setBootReady] = useState(false);
   const [dayHeight, setDayHeight] = useState(null);
   const listRef = useRef(null);
-  const didAutoJumpRef = useRef(false);
 
   // track user gesture + auto-jump settling
   const userScrollingRef = useRef(false);
-  const autoJumpingRef = useRef(false);
-  const autoJumpTimerRef = useRef(null);
 
-  // Firestore stream
+  // Firestore stream (with dedupe + boot gate)
   useEffect(() => {
     if (!uid) return;
     const q = query(collection(db, "users", uid, "RecentlyEaten"), orderBy("created_at", "desc"));
@@ -253,66 +268,101 @@ export default function HealthChecksCardFlatList({ userId, showHeader = true }) 
           const t = data.created_at?.toDate?.() || null;
           return { id: d.id, ...data, _createdAny: t };
         });
-        setRows(docs);
+        setRows((prev) => {
+          const sameLen = prev.length === docs.length;
+          const same = sameLen && prev.every((p, i) => p.id === docs[i].id && +p._createdAny === +docs[i]._createdAny);
+          if (!bootReady) setBootReady(true);
+          return same ? prev : docs;
+        });
       },
       (e) => console.warn("[HealthTimeline] onSnapshot error:", e?.message || e)
     );
     return () => unsub();
-  }, [uid, db]);
+  }, [uid, db, bootReady]);
 
-  // Days for this year → 2099 (chronological)
-  const [days] = useState(() => {
+  // locale + formatters
+  const { locale, timeZone } = useMemo(getLocaleAndTimeZone, []);
+  const { weekdayFmt, dateLineFmt, hourFmt } = useMemo(
+    () => makeDayFormatters(locale, timeZone),
+    [locale, timeZone]
+  );
+
+  // Precompute hour labels once
+  const hourLabels = useMemo(() => {
+    const labels = [];
+    for (let h = HOURS_START; h <= HOURS_END; h++) {
+      const d = new Date(2000, 0, 1, h, 0, 0);
+      labels.push(hourFmt.format(d).toUpperCase());
+    }
+    return labels;
+  }, [hourFmt]);
+
+  // Days for this year → 2099 (chronological) WITH precomputed labels
+  const [daysMeta] = useState(() => {
     const now = new Date();
     const start = startOfDay(new Date(now.getFullYear(), 0, 1));
     const end   = startOfDay(new Date(2099, 11, 31));
     const arr = [];
-    for (let d = start; d <= end; d = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1)) arr.push(new Date(d));
+    for (let d = start; d <= end; d = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1)) {
+      const date = new Date(d);
+      const key = keyFromDate(date);
+      arr.push({ date, key, weekday: "", dateLine: "" });
+    }
     return arr;
   });
 
-  const todayKey = todayKeyLocal();
-  const todayIndex = Math.max(0, days.findIndex((d) => keyFromDate(d) === todayKey));
+  // Fill weekday/dateLine once (or when tz/locale changes) without changing array identity
+  useEffect(() => {
+    for (const d of daysMeta) {
+      d.weekday  = weekdayFmt.format(d.date).toUpperCase();
+      d.dateLine = dateLineFmt.format(d.date).toUpperCase();
+    }
+    // no setState needed; props read from objects will reflect the new strings
+  }, [daysMeta, weekdayFmt, dateLineFmt]);
 
-  // Group items by day
+  const todayKey = todayKeyLocal();
+  const todayIndex = useMemo(() => {
+    const idx = daysMeta.findIndex((d) => d.key === todayKey);
+    return Math.max(0, idx);
+  }, [daysMeta, todayKey]);
+
+  // Group items by day (stable references per day key)
   const byDay = useMemo(() => {
-    const map = new Map();
+    const next = new Map();
     for (const r of rows) {
       const d = r._createdAny ? startOfDay(r._createdAny) : null;
-      const k = d ? keyFromDate(d) : null;
-      if (!k) continue;
-      if (!map.has(k)) map.set(k, []);
-      map.get(k).push(r);
+      if (!d) continue;
+      const k = keyFromDate(d);
+      if (!next.has(k)) next.set(k, []);
+      next.get(k).push(r);
     }
-    return map;
+    for (const [k, arr] of next) {
+      arr.sort((a,b) => +a._createdAny - +b._createdAny);
+      next.set(k, arr);
+    }
+    return next;
   }, [rows]);
 
   // optional: if a sticky/overlay header covers the very top, put its height here
-  const VIEW_OFFSET = height(8); // FIX: set to e.g. height(6) if needed
+  const VIEW_OFFSET = height(8);
 
-  // Jump helper
+  // Jump helper (single source of truth)
   const jumpToToday = useCallback((animated, { force = false } = {}) => {
     if (!listRef.current) return;
-
-    // allow button to override guards
-    if (!force && (userScrollingRef.current || autoJumpingRef.current)) return;
+    if (!force && userScrollingRef.current) return;
 
     try {
-      autoJumpingRef.current = true;
-      if (autoJumpTimerRef.current) clearTimeout(autoJumpTimerRef.current);
-      autoJumpTimerRef.current = setTimeout(() => { autoJumpingRef.current = false; }, 300);
-
       listRef.current.scrollToIndex({
         index: todayIndex,
         animated,
         viewPosition: 0,
-        viewOffset: VIEW_OFFSET, // FIX
+        viewOffset: VIEW_OFFSET,
       });
-    } catch (e) {
-      // robust fallback: rough jump near index, then snap next tick
+    } catch {
       const approxLen = dayHeight ?? height(60);
       const approx = approxLen * todayIndex;
       listRef.current?.scrollToOffset({ offset: approx, animated: false });
-      setTimeout(() => {
+      requestAnimationFrame(() => {
         try {
           listRef.current?.scrollToIndex({
             index: todayIndex,
@@ -321,57 +371,62 @@ export default function HealthChecksCardFlatList({ userId, showHeader = true }) 
             viewOffset: VIEW_OFFSET,
           });
         } catch {}
-      }, 16);
+      });
     }
   }, [todayIndex, dayHeight]);
 
-  // 1) After layout the very first time
-  const onListLayout = useCallback(() => {
-    if (!didAutoJumpRef.current) { didAutoJumpRef.current = true; jumpToToday(false); }
-  }, [jumpToToday]);
-
-  // 2) After content size changes (first render batches)
-  const onContentSizeChange = useCallback(() => {
-    if (!didAutoJumpRef.current) { didAutoJumpRef.current = true; jumpToToday(false); }
-  }, [jumpToToday]);
-
-  // 3) When the calendar date flips
-  useEffect(() => { jumpToToday(false); }, [todayKey, jumpToToday]);
-
-  // 4) On screen focus
-  useFocusEffect(useCallback(() => { jumpToToday(false); }, [jumpToToday]));
-
-  // 5) App returns to foreground
+  // One-time jump after first data + layout settle
   useEffect(() => {
-    const sub = AppState.addEventListener("change", (s) => { if (s === "active") jumpToToday(false); });
-    return () => sub.remove();
+    if (!bootReady) return;
+    let canceled = false;
+    const task = InteractionManager.runAfterInteractions(() => {
+      if (!canceled) jumpToToday(false, { force: true });
+    });
+    return () => { canceled = true; task.cancel?.(); };
+  }, [bootReady, jumpToToday]);
+
+  // Debounced resnap on focus/foreground (no spam)
+  const lastSnapRef = useRef(0);
+  const debouncedResnap = useCallback(() => {
+    if (userScrollingRef.current) return;
+    const now = Date.now();
+    if (now - lastSnapRef.current < 500) return;
+    lastSnapRef.current = now;
+    jumpToToday(false);
   }, [jumpToToday]);
+
+  useFocusEffect(useCallback(() => { if (bootReady) debouncedResnap(); }, [bootReady, debouncedResnap]));
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (s) => { if (s === "active" && bootReady) debouncedResnap(); });
+    return () => sub.remove();
+  }, [bootReady, debouncedResnap]);
+
+  // getItemLayout once we have a measured height to avoid scrollToIndexFailed churn
+  const itemLen = dayHeight ?? height(60);
+  const getItemLayout = dayHeight != null ? (data, index) => ({
+    length: itemLen,
+    offset: itemLen * index,
+    index,
+  }) : undefined;
+
+  // render gate to avoid pre-data flicker
+  if (!bootReady) {
+    return (
+      <View style={{ flex: 1, padding: rsWidth(5), justifyContent: "center" }}>
+        <PlaceholderBlock />
+      </View>
+    );
+  }
 
   return (
     <View style={{ flex: 1 }}>
       <FlatList
         ref={listRef}
-        data={days}
-        keyExtractor={(d) => keyFromDate(d)}
-        // no getItemLayout (variable heights)
-        onScrollToIndexFailed={(info) => {
-          // gentle retry near target, then snap
-          const approxLen = dayHeight ?? height(60);
-          const approx = approxLen * info.index;
-          listRef.current?.scrollToOffset({ offset: approx, animated: false });
-          requestAnimationFrame(() => {
-            try {
-              listRef.current?.scrollToIndex({
-                index: info.index,
-                animated: false,
-                viewPosition: 0,
-                viewOffset: VIEW_OFFSET, // FIX
-              });
-            } catch {}
-          });
-        }}
-        onLayout={onListLayout}
-        onContentSizeChange={onContentSizeChange}
+        data={daysMeta}
+        keyExtractor={(d) => d.key}
+        getItemLayout={getItemLayout}
+        initialScrollIndex={dayHeight != null ? todayIndex : undefined}
+        // if we don't yet have dayHeight, we'll still jump via InteractionManager above
         ListHeaderComponent={
           showHeader ? (
             <Text style={{ marginTop: height(6), marginLeft: rsWidth(5), fontSize: size(20), fontWeight: "900", color: COL.text }}>
@@ -382,27 +437,41 @@ export default function HealthChecksCardFlatList({ userId, showHeader = true }) 
         contentContainerStyle={{ paddingBottom: height(12) }}
         showsVerticalScrollIndicator={false}
         renderItem={({ item: day }) => {
-          const k = keyFromDate(day);
-          const items = byDay.get(k) || [];
+          const items = byDay.get(day.key) || [];
           return (
-            <View onLayout={(e) => { if (dayHeight == null && e.nativeEvent.layout.height > 0) setDayHeight(e.nativeEvent.layout.height); }}>
-              <DayBlock date={day} items={items} />
+            <View
+              onLayout={(e) => {
+                if (dayHeight == null && e.nativeEvent.layout.height > 0) {
+                  setDayHeight(e.nativeEvent.layout.height);
+                }
+              }}
+            >
+              <DayBlock
+                date={day.date}
+                items={items}
+                weekday={day.weekday}
+                dateLine={day.dateLine}
+                hourLabels={hourLabels}
+              />
             </View>
           );
         }}
-        initialNumToRender={10}
-        windowSize={16}
-        removeClippedSubviews={false}
+        // tuned batching to smooth first paint
+        initialNumToRender={6}
+        maxToRenderPerBatch={6}
+        updateCellsBatchingPeriod={50}
+        windowSize={10}
+        removeClippedSubviews
         scrollEventThrottle={16}
         onScrollBeginDrag={() => { userScrollingRef.current = true; }}
-        onMomentumScrollBegin={() => { userScrollingRef.current = true; }}   // FIX
-        onMomentumScrollEnd={() => { userScrollingRef.current = false; }}    // FIX
-        onScrollEndDrag={() => { userScrollingRef.current = false; }}        // FIX
+        onMomentumScrollBegin={() => { userScrollingRef.current = true; }}
+        onMomentumScrollEnd={() => { userScrollingRef.current = false; }}
+        onScrollEndDrag={() => { userScrollingRef.current = false; }}
       />
 
       {/* Floating "Today" button */}
       <TouchableOpacity
-        onPress={() => jumpToToday(true, { force: true })} // FIX: force override
+        onPress={() => jumpToToday(true, { force: true })}
         activeOpacity={0.9}
         style={{
           position: "absolute",
