@@ -8,18 +8,18 @@ import firestore, {
   serverTimestamp,
   updateDoc,
 } from "@react-native-firebase/firestore";
+import { useFocusEffect } from "@react-navigation/native";
 import { Image } from "expo-image";
 import { Minus, Plus } from "lucide-react-native";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  ActivityIndicator,
   Animated,
   FlatList,
   Platform,
   ScrollView,
   Text,
   TouchableOpacity,
-  View,
+  View
 } from "react-native";
 import CircularProgress from "react-native-circular-progress-indicator";
 import { height, size, width } from "react-native-responsive-sizes";
@@ -37,14 +37,17 @@ const toNum = (n, d = 0) => {
 const hasVal = (v) => v !== undefined && v !== null;
 
 /* ----------- Image helper: prefetch + cache-bust ----------- */
-const ItemThumb = ({ uri, updatedAt }) => {
-  const finalUri = React.useMemo(() => {
+const ItemThumb = ({ uri, updatedAt, bust }) => {
+  const finalUri = useMemo(() => {
     if (!uri) return null;
+
     const ts =
       (updatedAt?.seconds ?? updatedAt?._seconds) ??
       (typeof updatedAt === "number" ? updatedAt : Date.now());
-    return uri.includes("?") ? `${uri}&t=${ts}` : `${uri}?t=${ts}`;
-  }, [uri, updatedAt]);
+
+    const param = `t=${ts}&b=${bust ?? 0}`;
+    return uri.includes("?") ? `${uri}&${param}` : `${uri}?${param}`;
+  }, [uri, updatedAt, bust]);
 
   useEffect(() => {
     if (finalUri) {
@@ -115,6 +118,14 @@ export default function Inventory() {
     pageSize: 6,
     model: "o4-mini",
   });
+
+  // 🔁 focus-bust token: changes every time screen gets focus
+  const [focusBust, setFocusBust] = useState(0);
+  useFocusEffect(
+    useCallback(() => {
+      setFocusBust(Date.now());
+    }, [])
+  );
 
   // Firestore subscription
   useEffect(() => {
@@ -188,13 +199,8 @@ export default function Inventory() {
     return out;
   }, [items]);
 
-  if (loadingHere) {
-    return (
-      <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
-        <ActivityIndicator size="large" color="#000" />
-      </View>
-    );
-  }
+
+  
 
   return (
     <View style={{ backgroundColor: "#fff", height: "100%", width: "100%" }}>
@@ -316,10 +322,11 @@ export default function Inventory() {
                       backgroundColor: "#ccc",
                     }}
                   >
-                    {/* swapped Image -> ItemThumb */}
+                    {/* refreshes on screen focus via `bust` */}
                     <ItemThumb
                       uri={item.image_cloud_url}
                       updatedAt={item.updated_at || item.created_at}
+                      bust={focusBust}
                     />
                   </View>
 

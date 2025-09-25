@@ -1,5 +1,4 @@
-// Layout.tsx
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react"; // CHANGED: added useEffect
 import {
   Dimensions,
   LayoutChangeEvent,
@@ -26,11 +25,12 @@ import { CameraActiveProvider } from "../Context/CameraActiveContext";
 import { ScanResultsProvider } from "../Context/ScanResultsContext";
 import { SheetsProvider } from "../Context/SheetsContext";
 import Tabbar from "../TabBar";
+
+// NEW: Firebase modular imports
+import { getAuth } from "@react-native-firebase/auth";
+import { doc, getDoc, getFirestore } from "@react-native-firebase/firestore";
+
 // App.js
-
-
-
-
 
 const { width: SCREEN_W } = Dimensions.get("window");
 const HEADER_H = height(15);
@@ -59,11 +59,6 @@ type RouteItem = {
 };
 
 export default function Layout(): React.ReactElement {
-
-
-
-  
-
   const insets = useSafeAreaInsets();
 
   const pagerRef = useRef<PagerView>(null);
@@ -73,13 +68,41 @@ export default function Layout(): React.ReactElement {
 
   const visitedRef = useRef<Set<number>>(new Set([0]));
 
+  // NEW: local state to hold the first character of displayName
+  const [profileTitle, setProfileTitle] = useState<string>("B");
+
+  // NEW: fetch displayName from users/$uid and store first character
+  useEffect(() => {
+    const run = async () => {
+      try {
+        const auth = getAuth();
+        const uid = auth?.currentUser?.uid;
+        if (!uid) return;
+
+        const db = getFirestore();
+        const userRef = doc(db, "users", uid);
+        const snap = await getDoc(userRef);
+
+        const displayName = snap.exists() ? (snap.data()?.displayName as string | undefined) : undefined;
+        const initial =
+          (displayName?.trim()?.charAt(0) ||
+            auth?.currentUser?.email?.trim()?.charAt(0) ||
+            "B").toUpperCase();
+
+        setProfileTitle(initial);
+      } catch (e) {
+        // keep default "B" if anything goes wrong
+      }
+    };
+    run();
+  }, []);
+
   const routes: RouteItem[] = useMemo(
     () => [
       { key: "Home", title: "Home", render: ({ paused }) => <HomeScreen paused={paused} /> },
       { key: "Progress", title: "Progress", render: ({ paused }) => <ProgressScreen paused={paused} /> },
       { key: "HealthChecks", title: "Health Checks", render: ({ paused }) => <Health_CheckScreen paused={paused} /> },
       { key: "Inventory", title: "Inventory", render: ({ paused }) => <InventoryScreen paused={paused} /> },
-      
       { key: "Profile", title: "Profile", render: ({ paused }) => <ProfileScreen paused={paused} /> },
     ],
     []
@@ -119,7 +142,6 @@ export default function Layout(): React.ReactElement {
 
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: "#fff" }}>
-      
       <CameraActiveProvider>
         <SheetsProvider>
           <ScanResultsProvider>
@@ -178,7 +200,9 @@ export default function Layout(): React.ReactElement {
                     { backgroundColor: activeIndex === profileIndex ? "#222" : "#ADB6BD" },
                   ]}
                 >
-                  <Text style={{ color: "#fff", fontWeight: "700" }}>B</Text>
+                  <Text style={{ color: "#fff", fontWeight: "700" }}>
+                    {profileTitle /* CHANGED: dynamic initial from Firestore */}
+                  </Text>
                 </View>
               </Pressable>
             </View>

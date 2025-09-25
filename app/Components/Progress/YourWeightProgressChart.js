@@ -23,14 +23,6 @@ const COLORS = {
   shadow: "#00000050",
 };
 
-/* ---------- public ranges ---------- */
-export const RANGES = [
-  { key: "30d", label: "30d", days: 30 },
-  { key: "90d", label: "90d", days: 90 },
-  { key: "1Y",  label: "1Y",  days: 365 },
-  { key: "All", label: "All", days: null },
-];
-
 const MS_DAY = 24 * 60 * 60 * 1000;
 
 /* ---------- helpers ---------- */
@@ -45,6 +37,15 @@ const toDate = (v) =>
     : v?.seconds
     ? new Date(v.seconds * 1000)
     : null);
+
+// Accepts "30D"/"90D"/"1Y"/"ALL" (from ProgressComponent) and also tolerant of "30d"/"All"
+const normalizeRange = (range) => {
+  const key = String(range || "90D").toUpperCase();
+  if (key === "30D") return { key: "30D", label: "30D", days: 30 };
+  if (key === "90D") return { key: "90D", label: "90D", days: 90 };
+  if (key === "1Y")  return { key: "1Y",  label: "1Y",  days: 365 };
+  return { key: "ALL", label: "ALL", days: null };
+};
 
 /* ---------- Big number that follows tooltip when active ---------- */
 function HeaderValue({ latestKg }) {
@@ -80,7 +81,7 @@ function HeaderValue({ latestKg }) {
 /* ---------- component ---------- */
 export default function WeightProgressChart({
   heightPx = 180,
-  range = "90d",
+  range = "90D",             // ← receives prop from ProgressComponent
   title = "Weight Progress",
 }) {
   const uid = getAuth().currentUser?.uid;
@@ -88,20 +89,14 @@ export default function WeightProgressChart({
   const [allPoints, setAllPoints] = useState([]); // [{ timestamp, value(kg) }]
   const [loading, setLoading] = useState(true);
 
-  const selected = useMemo(() => {
-    const key = String(range || "").trim();
-    return (
-      RANGES.find((r) => r.key.toLowerCase() === key.toLowerCase()) ||
-      RANGES.find((r) => r.key === "90d")
-    );
-  }, [range]);
+  const selected = useMemo(() => normalizeRange(range), [range]);
 
-  /* Stream weight from /users/$uid/weightprogrss ordered by createdAt ASC */
+  /* Stream weight from /users/$uid/weightprogrss ordered by createdAt ASC (single stream) */
   useEffect(() => {
     if (!uid) return;
     const db = getFirestore();
     const qy = query(
-      collection(db, "users", uid, "weightprogrss"), // <-- path used
+      collection(db, "users", uid, "weightprogrss"),
       orderBy("createdAt", "asc")
     );
 
@@ -132,9 +127,9 @@ export default function WeightProgressChart({
     return () => unsub?.();
   }, [uid]);
 
-  /* Filter by selected range (fallback to All if empty) */
+  /* Filter by selected range (fallback to ALL if empty for that window) */
   const { points } = useMemo(() => {
-    if (!selected?.days) return { points: allPoints };
+    if (!selected.days) return { points: allPoints };
     const cutoff = Date.now() - selected.days * MS_DAY;
     const filtered = allPoints.filter((p) => p.timestamp >= cutoff);
     return filtered.length ? { points: filtered } : { points: allPoints };
@@ -198,7 +193,7 @@ export default function WeightProgressChart({
                 <LineChart.Gradient color={COLORS.fill} />
               </LineChart.Path>
 
-              {/* Tooltip now shows the DATE (not the kg number) */}
+              {/* Tooltip shows DATE (not kg). Big number above tracks cursor value */}
               <LineChart.CursorCrosshair color={COLORS.line}>
                 <LineChart.Tooltip
                   position="top"
@@ -212,7 +207,7 @@ export default function WeightProgressChart({
                   }}
                 >
                   <LineChart.DatetimeText
-                    options={{ month: "short", day: "numeric" }} // e.g., "Sep 9"
+                    options={{ month: "short", day: "numeric" }} // e.g., Sep 9
                   />
                 </LineChart.Tooltip>
                 <LineChart.HoverTrap />

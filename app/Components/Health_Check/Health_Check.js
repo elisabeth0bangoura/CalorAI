@@ -25,7 +25,6 @@ const COL = {
 
 /* ---------- locale & tz (Expo) ---------- */
 const getLocaleAndTimeZone = () => {
-  // Always English (US). Change to 'en-GB' for UK-style dates if you prefer.
   const locale = "en-US";
   const tz =
     Localization.getCalendars?.()[0]?.timeZone ||
@@ -191,14 +190,8 @@ const DayBlock = ({ date, items, onMeasure }) => {
     return map;
   }, [items]);
 
-  // Locale-aware headings
-  const weekday = date
-    .toLocaleDateString(locale, { weekday: "long", timeZone })
-    .toUpperCase();
-
-  const dateLine = date
-    .toLocaleDateString(locale, { day: "2-digit", month: "long", timeZone })
-    .toUpperCase();
+  const weekday = date.toLocaleDateString(locale, { weekday: "long", timeZone }).toUpperCase();
+  const dateLine = date.toLocaleDateString(locale, { day: "2-digit", month: "long", timeZone }).toUpperCase();
 
   return (
     <View onLayout={(e) => onMeasure?.(e.nativeEvent.layout.height)} style={{ paddingBottom: height(4) }}>
@@ -243,6 +236,11 @@ export default function HealthChecksCardFlatList({ userId, showHeader = true }) 
   const listRef = useRef(null);
   const didAutoJumpRef = useRef(false);
 
+  // track user gesture + auto-jump settling
+  const userScrollingRef = useRef(false);
+  const autoJumpingRef = useRef(false);
+  const autoJumpTimerRef = useRef(null);
+
   // Firestore stream
   useEffect(() => {
     if (!uid) return;
@@ -272,8 +270,7 @@ export default function HealthChecksCardFlatList({ userId, showHeader = true }) 
     return arr;
   });
 
-  // Compute today every render
-  const todayKey = todayKeyLocal();          // ← purely local calendar date
+  const todayKey = todayKeyLocal();
   const todayIndex = Math.max(0, days.findIndex((d) => keyFromDate(d) === todayKey));
 
   // Group items by day
@@ -289,24 +286,41 @@ export default function HealthChecksCardFlatList({ userId, showHeader = true }) 
     return map;
   }, [rows]);
 
+  // optional: if a sticky/overlay header covers the very top, put its height here
+  const VIEW_OFFSET = height(8); // FIX: set to e.g. height(6) if needed
+
   // Jump helper
-  const jumpToToday = useCallback((animated) => {
+  const jumpToToday = useCallback((animated, { force = false } = {}) => {
     if (!listRef.current) return;
+
+    // allow button to override guards
+    if (!force && (userScrollingRef.current || autoJumpingRef.current)) return;
+
     try {
-      if (dayHeight != null) {
-        listRef.current.scrollToIndex({ index: todayIndex, animated, viewPosition: 0 });
-      } else {
-        // before we know height: approximate, then snap again next frame
-        const approx = height(60) * todayIndex;
-        listRef.current.scrollToOffset({ offset: approx, animated: false });
-        requestAnimationFrame(() => {
-          try { listRef.current?.scrollToIndex({ index: todayIndex, animated: false, viewPosition: 0 }); } catch {}
-        });
-      }
+      autoJumpingRef.current = true;
+      if (autoJumpTimerRef.current) clearTimeout(autoJumpTimerRef.current);
+      autoJumpTimerRef.current = setTimeout(() => { autoJumpingRef.current = false; }, 300);
+
+      listRef.current.scrollToIndex({
+        index: todayIndex,
+        animated,
+        viewPosition: 0,
+        viewOffset: VIEW_OFFSET, // FIX
+      });
     } catch (e) {
-      // if it throws because not enough items are rendered, try again soon
+      // robust fallback: rough jump near index, then snap next tick
+      const approxLen = dayHeight ?? height(60);
+      const approx = approxLen * todayIndex;
+      listRef.current?.scrollToOffset({ offset: approx, animated: false });
       setTimeout(() => {
-        try { listRef.current?.scrollToIndex({ index: todayIndex, animated: false, viewPosition: 0 }); } catch {}
+        try {
+          listRef.current?.scrollToIndex({
+            index: todayIndex,
+            animated: false,
+            viewPosition: 0,
+            viewOffset: VIEW_OFFSET,
+          });
+        } catch {}
       }, 16);
     }
   }, [todayIndex, dayHeight]);
@@ -339,13 +353,21 @@ export default function HealthChecksCardFlatList({ userId, showHeader = true }) 
         ref={listRef}
         data={days}
         keyExtractor={(d) => keyFromDate(d)}
-        getItemLayout={dayHeight != null ? (_d, index) => ({ length: dayHeight, offset: dayHeight * index, index }) : undefined}
+        // no getItemLayout (variable heights)
         onScrollToIndexFailed={(info) => {
-          const approxLen = dayHeight ?? info.averageItemLength ?? height(60);
+          // gentle retry near target, then snap
+          const approxLen = dayHeight ?? height(60);
           const approx = approxLen * info.index;
           listRef.current?.scrollToOffset({ offset: approx, animated: false });
           requestAnimationFrame(() => {
-            try { listRef.current?.scrollToIndex({ index: info.index, animated: false, viewPosition: 0 }); } catch {}
+            try {
+              listRef.current?.scrollToIndex({
+                index: info.index,
+                animated: false,
+                viewPosition: 0,
+                viewOffset: VIEW_OFFSET, // FIX
+              });
+            } catch {}
           });
         }}
         onLayout={onListLayout}
@@ -370,12 +392,17 @@ export default function HealthChecksCardFlatList({ userId, showHeader = true }) 
         }}
         initialNumToRender={10}
         windowSize={16}
-        removeClippedSubviews
+        removeClippedSubviews={false}
+        scrollEventThrottle={16}
+        onScrollBeginDrag={() => { userScrollingRef.current = true; }}
+        onMomentumScrollBegin={() => { userScrollingRef.current = true; }}   // FIX
+        onMomentumScrollEnd={() => { userScrollingRef.current = false; }}    // FIX
+        onScrollEndDrag={() => { userScrollingRef.current = false; }}        // FIX
       />
 
       {/* Floating "Today" button */}
       <TouchableOpacity
-        onPress={() => jumpToToday(true)}
+        onPress={() => jumpToToday(true, { force: true })} // FIX: force override
         activeOpacity={0.9}
         style={{
           position: "absolute",
